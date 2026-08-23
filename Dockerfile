@@ -197,6 +197,12 @@ COPY . .
 # resolution or downloads.
 RUN uv pip install --no-cache-dir --no-deps -e "."
 
+# Druzhok patch: pre-install firecrawl-py for the web/firecrawl search plugin.
+# hermes runs with security.allow_lazy_installs=false, so the package must be
+# present in the image or web search fails with "firecrawl не установлен".
+# Web search routes to the druzhok proxy /v2/search (FIRECRAWL_API_URL).
+RUN uv pip install --no-cache-dir "firecrawl-py==4.17.0"
+
 # Keep /opt/hermes immutable for the runtime hermes user. Hosted/container
 # instances must not be able to self-edit the installed source or venv; user
 # data, skills, plugins, config, logs, and dashboard uploads live under
