@@ -649,7 +649,11 @@ class GatewayAuthorizationMixin:
                 platform_allow_env = getattr(entry, "allowed_users_env", "") or platform_allow_env
                 platform_allow_all_var = getattr(entry, "allow_all_env", "") or platform_allow_all_var
         if platform_allow_all_var and _env_truthy(platform_allow_all_var):
-            return True
+            # Druzhok patch: only bypass auth for non-DM chats. DMs still
+            # require pairing/allowlist so strangers can't talk to the bot.
+            if source.chat_type != "dm":
+                return True
+            # DMs fall through to pairing/allowlist checks below.
         # Adapter-verified role auth (Discord DISCORD_ALLOWED_ROLES). ``is True``: no MagicMock pass.
         if allow_adapter_delegation and getattr(source, "role_authorized", False) is True:
             return True
