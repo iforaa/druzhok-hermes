@@ -265,6 +265,10 @@ honcho = ["honcho-ai==2.2.0"]
 # upstream release can't break fresh installs.
 supermemory = ["supermemory==3.50.0"]
 mem0 = ["mem0ai==2.0.10"]
+# Druzhok: Mnemosyne memory provider (docs/superpowers/specs/2026-09-06-mnemosyne-memory-design.md
+# in the druzhok repo). Installed with `--extra mnemosyne`; discovered through the
+# hermes_agent.memory_providers entry point.
+mnemosyne = ["mnemosyne-memory[embeddings]==3.15.1", "mnemosyne-hermes==0.5.0"]
 # Image resize recovery for the vision tools. Pillow is now a CORE dependency
 # (see the main `dependencies` list above) since the byte/pixel shrink paths are on
 # the default vision-embed path and the mid-session lazy install deadlocked the
