@@ -61,6 +61,19 @@ def format_iteration_progress(api_call_count: Any, max_iterations: Any) -> str:
     return f"iteration {api_call_count}/{cap}"
 
 
+def format_iteration_progress_localized(api_call_count: Any, max_iterations: Any) -> str:
+    """:func:`format_iteration_progress` in the active UI language, for messenger busy acks and
+    the working heartbeat (``gateway.busy.iteration`` / ``gateway.busy.iteration_open``)."""
+    from agent.i18n import t
+    try:
+        cap = int(max_iterations)
+    except (TypeError, ValueError):
+        cap = sys.maxsize
+    if cap >= sys.maxsize:
+        return t("gateway.busy.iteration_open", current=api_call_count)
+    return t("gateway.busy.iteration", current=api_call_count, max=cap)
+
+
 def reset_session_activity_persist_window(agent: Any) -> None:
     """Clear the persist rate-limit so the next stamp writes through (terminal compression labels must not stick on mid-compress text)."""
     with suppress(Exception):

@@ -331,18 +331,18 @@ class GatewaySlashCommandsMixin(
         policy = policy_for_source(self.config, source)
         platform = source.platform.value if source and source.platform else "?"
         chat_type = ((source.chat_type if source else "") or "dm").lower()
-        scope = "DM" if chat_type in {"dm", "direct", "private", ""} else "group/channel"
+        scope = t("gateway.slash.scope_dm" if chat_type in {"dm", "direct", "private", ""} else "gateway.slash.scope_group")
         user_id = (source.user_id if source else None) or "?"
-        head = f"**You** — {platform} ({scope})\nUser ID: `{user_id}`\n"
+        head = t("gateway.slash.whoami_header", platform=platform, scope=scope, user_id=user_id) + "\n"
         if not policy.enabled:
-            return head + "Tier: unrestricted (no admin list configured for this scope)\nSlash commands: all available"
+            return head + t("gateway.slash.whoami_unrestricted")
         if policy.is_admin(user_id):
-            return head + "Tier: **admin**\nSlash commands: all available"
+            return head + t("gateway.slash.whoami_admin")
         # Non-admin: floor first (mirrors slash_access._ALWAYS_ALLOWED_FOR_USERS), then operator
         # additions, deduped in order.
         runnable = list(dict.fromkeys(["help", "whoami"] + sorted(policy.user_allowed_commands)))
-        runnable_str = ", ".join(f"/{c}" for c in runnable) if runnable else "(none)"
-        return head + f"Tier: user\nSlash commands you can run: {runnable_str}"
+        runnable_str = ", ".join(f"/{c}" for c in runnable) if runnable else t("gateway.slash.none")
+        return head + t("gateway.slash.whoami_user", commands=runnable_str)
 
     async def _handle_kanban_command(self, event: MessageEvent) -> str:
         """Handle /kanban — delegate to the shared kanban CLI (DB work in a thread pool). Allowed

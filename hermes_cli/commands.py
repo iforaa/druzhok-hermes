@@ -464,6 +464,23 @@ def _is_gateway_available(cmd: CommandDef, config_overrides: set[str] | None = N
     return cmd.name in overrides
 
 
+def localized_description(cmd: CommandDef) -> str:
+    """Return the command description in the active UI language.
+
+    Catalog key is ``commands.<name>`` (locales/<lang>.yaml).  Commands without
+    a catalog entry keep their English ``CommandDef.description`` so plugin and
+    rarely-used commands never render as a bare key path.
+    """
+    try:
+        from agent.i18n import has_key, t
+        key = f"commands.{cmd.name}"
+        if has_key(key):
+            return t(key)
+    except Exception:
+        pass
+    return cmd.description
+
+
 def gateway_help_lines(allowed: Optional[Iterable[str]] = None) -> list[str]:
     """Generate gateway help text lines from the registry.
 
@@ -484,7 +501,7 @@ def gateway_help_lines(allowed: Optional[Iterable[str]] = None) -> list[str]:
         alias_parts = [f"`/{a}`" for a in cmd.aliases
                        if not (a.replace("-", "_") == cmd.name.replace("-", "_") and a != cmd.name)]
         alias_note = f" (alias: {', '.join(alias_parts)})" if alias_parts else ""
-        lines.append(f"`/{cmd.name}{args}` -- {cmd.description}{alias_note}")
+        lines.append(f"`/{cmd.name}{args}` -- {localized_description(cmd)}{alias_note}")
     return lines
 
 

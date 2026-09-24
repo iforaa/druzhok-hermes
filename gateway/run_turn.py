@@ -16,7 +16,7 @@ import queue
 import threading
 import time
 from agent.i18n import t
-from agent.session_activity import format_iteration_progress
+from agent.session_activity import format_iteration_progress, format_iteration_progress_localized
 from agent.turn_failure_copy import FAILED_TURN_DISPLAY_KIND, FAILED_TURN_NOTICE, PARTIAL_FAILED_TURN_NOTICE
 from contextlib import nullcontext, suppress
 from contextvars import copy_context
@@ -4177,7 +4177,7 @@ class GatewayTurnMixin:
                 if _a:
                     _parts = []
                     if _want_iteration_detail:
-                        _parts.append(format_iteration_progress(_a["api_call_count"], _a["max_iterations"]))
+                        _parts.append(format_iteration_progress_localized(_a["api_call_count"], _a["max_iterations"]))
                     _action = _a.get("current_tool") or _a.get("last_activity_desc")
                     if _action:
                         _parts.append(str(_action))
@@ -4186,7 +4186,7 @@ class GatewayTurnMixin:
             _heartbeat_text = (
                 disp._generic_status_phrase("status")
                 if _long_running_mode == "generic"
-                else f"⏳ Working — {_elapsed_mins} min{_status_detail}"
+                else t("gateway.busy.working", minutes=_elapsed_mins, detail=_status_detail)
             )
             try:
                 _notify_res = None

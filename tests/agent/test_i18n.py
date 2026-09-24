@@ -168,3 +168,72 @@ def test_locales_dir_env_override_ignored_when_missing(tmp_path, monkeypatch):
     assert result.name == "locales"
 
 
+
+# ---------------------------------------------------------------------------
+# Command-menu descriptions and busy notices (commands.*, gateway.busy.*)
+# ---------------------------------------------------------------------------
+
+
+def test_has_key_sees_english_fallback(monkeypatch):
+    monkeypatch.setenv("HERMES_LANGUAGE", "ru")
+    i18n.reset_language_cache()
+    assert i18n.has_key("gateway.busy.working")
+    assert i18n.has_key("commands.new")
+    assert not i18n.has_key("commands.no_such_command")
+
+
+def test_localized_description_falls_back_to_english_definition(monkeypatch):
+    from hermes_cli.commands import COMMAND_REGISTRY, localized_description
+
+    by_name = {c.name: c for c in COMMAND_REGISTRY}
+    monkeypatch.setenv("HERMES_LANGUAGE", "ru")
+    i18n.reset_language_cache()
+    assert localized_description(by_name["new"]) != by_name["new"].description
+    # No catalog entry -> the CommandDef text, never a bare key path.
+    assert localized_description(by_name["egress"]) == by_name["egress"].description
+    monkeypatch.setenv("HERMES_LANGUAGE", "en")
+    i18n.reset_language_cache()
+    assert localized_description(by_name["new"]) == by_name["new"].description
+
+
+def test_iteration_progress_localized_hides_unbounded_ceiling(monkeypatch):
+    import sys
+    from agent.session_activity import format_iteration_progress_localized
+
+    monkeypatch.setenv("HERMES_LANGUAGE", "ru")
+    i18n.reset_language_cache()
+    assert format_iteration_progress_localized(3, 90) == "итерация 3/90"
+    assert format_iteration_progress_localized(3, sys.maxsize) == "итерация 3"
+    monkeypatch.setenv("HERMES_LANGUAGE", "en")
+    i18n.reset_language_cache()
+    assert format_iteration_progress_localized(3, 90) == "iteration 3/90"
+    assert format_iteration_progress_localized(3, sys.maxsize) == "iteration 3"
+
+
+def test_english_command_catalog_matches_registry():
+    """en.yaml commands.* must mirror the CommandDef text, else English menus drift from upstream."""
+    from hermes_cli.commands import COMMAND_REGISTRY
+
+    by_name = {c.name: c for c in COMMAND_REGISTRY}
+    for name, text in _load_raw("en")["commands"].items():
+        assert text == by_name[name].description, name
+
+
+# Slash-access replies (gateway.slash.*): the admin-only denial and /whoami.
+
+
+def test_slash_denial_renders_the_english_sentence(monkeypatch):
+    monkeypatch.setenv("HERMES_LANGUAGE", "en")
+    i18n.reset_language_cache()
+    suffix = i18n.t("gateway.slash.denied_allowed", commands="/new, /status")
+    assert i18n.t("gateway.slash.denied", command="model", suffix=suffix) == (
+        "⛔ /model is admin-only here. You can run: /new, /status. Use /whoami for the full list."
+    )
+
+
+def test_slash_whoami_is_localized(monkeypatch):
+    monkeypatch.setenv("HERMES_LANGUAGE", "ru")
+    i18n.reset_language_cache()
+    header = i18n.t("gateway.slash.whoami_header", platform="telegram", scope=i18n.t("gateway.slash.scope_dm"), user_id="1")
+    assert header == "**Вы** — telegram (личка)\nID пользователя: `1`"
+    assert i18n.t("gateway.slash.denied", command="model", suffix="").startswith("⛔ /model здесь только для админа")

@@ -20,6 +20,32 @@ approval:
   blocklist_message: "Bu komut koşulsuz engelleme listesinde ve onaylanamaz."
 
 gateway:
+  # Mid-run replies when a message arrives while the agent is busy, and the
+  # long-running heartbeat. {detail} is a pre-formatted " (…)" suffix.
+  busy:
+    steered: "⏩ Mesaj mevcut çalıştırmaya yönlendirildi{detail}. Bir sonraki araç çağrısından sonra ulaşacak."
+    steered_subagents: "⏩ Mesaj mevcut çalıştırmaya ve etkin alt ajanlarına yönlendirildi{detail}. Onların bir sonraki araç çağrısından sonra ulaşacak."
+    redirected: "↪ Mevcut çalıştırma yeniden yönlendirildi{detail}. Düzeltmeni dikkate alacağım."
+    subagent_queued: "⏳ Alt ajan çalışıyor{detail} — mesajın bitene kadar kuyrukta (/stop her şeyi iptal eder)."
+    compressing_queued: "⏳ Bağlam sıkıştırılıyor{detail} — mesajın bitene kadar kuyrukta (/stop her şeyi iptal eder)."
+    queued: "⏳ Sonraki tur için kuyruğa alındı{detail}. Mevcut görev bitince yanıtlayacağım."
+    interrupting: "⚡ Mevcut görev kesiliyor{detail}. Mesajına birazdan yanıt vereceğim."
+    elapsed: "{minutes} dk geçti"
+    iteration: "yineleme {current}/{max}"
+    iteration_open: "yineleme {current}"
+    running: "çalışıyor: {tool}"
+    working: "⏳ Çalışıyorum — {minutes} dk{detail}"
+  slash:
+    denied: "⛔ /{command} burada yalnızca yöneticiler için. {suffix}"
+    denied_allowed: "Kullanabilecekleriniz: {commands}. Tam liste için /whoami."
+    denied_none: "Bu platformda yönetici olmayanlar için etkin slash komutu yok. Bir yöneticiden sizi allow_admin_from listesine eklemesini veya user_allowed_commands ayarlamasını isteyin."
+    whoami_header: "**Siz** — {platform} ({scope})\nKullanıcı kimliği: `{user_id}`"
+    whoami_unrestricted: "Seviye: kısıtlamasız (bu kapsam için yönetici listesi yapılandırılmamış)\nSlash komutları: tümü kullanılabilir"
+    whoami_admin: "Seviye: **yönetici**\nSlash komutları: tümü kullanılabilir"
+    whoami_user: "Seviye: kullanıcı\nKullanabileceğiniz slash komutları: {commands}"
+    scope_dm: "DM"
+    scope_group: "grup/kanal"
+    none: "(yok)"
   approval_expired: "⚠️ Onay süresi doldu (ajan artık beklemiyor). Ajanın tekrar denemesini isteyin."
   draining:         "⏳ Yeniden başlatmadan önce {count} aktif ajan bekleniyor..."
   goal_cleared:     "✓ Hedef temizlendi."
@@ -463,3 +489,16 @@ Future messages in this room will use that transcript until `/reset` or another 
     session_db_unavailable_prefix: "Oturum veritabanı kullanılamıyor"
     session_not_found:           "Oturum veritabanında bulunamadı."
     warn_passthrough:            "⚠️ {error}"
+
+# Slash-command descriptions shown in messenger command menus and /help.
+# Commands without an entry keep their English CommandDef.description.
+commands:
+  help: "Kullanılabilir komutları göster (/help skills beceri komutlarını listeler, /help <metin> filtreler)"
+  new: "Yeni oturum başlat (yeni oturum kimliği + geçmiş)"
+  stop: "Çalışan tüm arka plan işlemlerini durdur"
+  status: "Oturum, model, token ve bağlam bilgisini göster"
+  resume: "Adı verilen bir oturumu sürdür"
+  sessions: "Önceki oturumlara göz at ve sürdür"
+  model: "Modeli değiştir (oturum için; --global kalıcı yapar)"
+  compress: "Konuşma bağlamını sıkıştır ('here [N]' son N turu korur; --preview planı gösterir)"
+  voice: "Ses modunu aç/kapat"
