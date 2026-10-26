@@ -86,3 +86,47 @@ def test_background_notice_drops_command_and_tail(monkeypatch, on):
     assert ("secret_job" in failed) is not on
     assert ("Traceback" in failed) is not on
     assert (" 2" in failed) is not on
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("on", [False, True])
+async def test_auto_reset_notice_hides_session_info(monkeypatch, on):
+    from types import SimpleNamespace
+
+    import gateway.run_turn as run_turn
+
+    _set_mode(monkeypatch, on)
+    monkeypatch.setattr(run_turn, "build_channel_continuity_note", lambda *_a: None)
+    runner = _make_runner()
+    adapter = SimpleNamespace(send=AsyncMock())
+    runner._delivery_adapter_for = lambda _source: adapter
+    runner._thread_metadata_for_source = lambda _source: None
+    runner._reset_notice_session_info = lambda _source: "◆ Model: `test-model`"
+    entry = SimpleNamespace(auto_reset_reason="suspended")
+
+    await runner._hmwa_deliver_auto_reset_notice(entry, _make_source(), [])
+
+    notice = adapter.send.await_args.args[1]
+    assert ("test-model" in notice) is not on
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("on", [False, True])
+async def test_empty_reply_uses_the_catalog_text_in_end_user_mode(monkeypatch, on):
+    from agent.turn_explainers import EMPTY_RESPONSE_EXPLANATION
+    from tests.gateway.test_empty_sentinel_rewrite_copy import _Runner
+    from types import SimpleNamespace
+
+    _set_mode(monkeypatch, on)
+    monkeypatch.setattr("agent.turn_explainers.empty_response_explanation", lambda model: f"catalog:{model}")
+    agent_result = {"final_response": "(empty)", "model": "llama3", "messages": [], "api_calls": 2}
+    source = SimpleNamespace(chat_id="c1", platform=SimpleNamespace(value="telegram"))
+
+    response, _silent, _messages = await _Runner()._hmwa_shape_agent_response(
+        agent_result, source, history=[], session_entry=SimpleNamespace(session_id="s"), session_key=None,
+        _quick_key=None, run_generation=0, _run_start_session_id="s", _platform_name="telegram",
+        _msg_start_time=0.0,
+    )
+
+    assert ("catalog:llama3" in response) is on
+    assert (EMPTY_RESPONSE_EXPLANATION.format(model="llama3") in response) is not on
