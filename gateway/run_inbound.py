@@ -599,10 +599,11 @@ class GatewayInboundMixin(GatewayPluginInjectionMixin):
         _cmd_def_inner = _resolve_cmd_inner(_evt_cmd) if _evt_cmd else None
 
         if _cmd_def_inner:
-            # /status and /context are intentionally pre-gate so users always see session state.
-            if _cmd_def_inner.name == "status":
-                return True, await self._handle_status_command(event)
-            if _cmd_def_inner.name == "context":
+            # /status and /context are intentionally pre-gate so users always see session state; with
+            # display.end_user_mode they show model/provider/token internals, so they pass the gate below.
+            if _cmd_def_inner.name in ("status", "context") and not self._load_end_user_mode():
+                if _cmd_def_inner.name == "status":
+                    return True, await self._handle_status_command(event)
                 return True, await self._handle_context_command(event)
             # Slash access control mirrors the cold-path gate so non-admins can't bypass gating
             # just because an agent is busy. /help and /whoami are the always-allowed floor.
@@ -870,6 +871,8 @@ class GatewayInboundMixin(GatewayPluginInjectionMixin):
         )
 
     async def _hm_cmd_start(self, event, source, _quick_key):
+        if self._load_end_user_mode():
+            return True, t("gateway.start.greeting")
         logger.info("Ignoring /start platform ping for session %s", _quick_key)
         return True, ""
 

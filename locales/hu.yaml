@@ -446,6 +446,8 @@ gateway:
     state_no: "Nem"
     queued: "**Sorban álló folytatások:** {count}"
     platforms: "**Csatlakoztatott platformok:** {platforms}"
+  start:
+    greeting: "👋 Szia! Írj nekem bármit – szövegben vagy hangüzenetben. /help – mire vagyok képes."
   stop:
     stopped_pending: "⚡ Leállítva. Az ügynök még el sem kezdte — folytathatod ezt a munkamenetet."
     stopped: "⚡ Leállítva. Folytathatod ezt a munkamenetet."

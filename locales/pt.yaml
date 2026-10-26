@@ -443,6 +443,8 @@ gateway:
     state_no: "Não"
     queued: "**Seguimentos em fila:** {count}"
     platforms: "**Plataformas ligadas:** {platforms}"
+  start:
+    greeting: "👋 Olá! Escreva o que quiser — texto ou mensagem de voz. /help — o que eu sei fazer."
   stop:
     stopped_pending: "⚡ Parado. O agente ainda não tinha começado — podes continuar esta sessão."
     stopped: "⚡ Parado. Podes continuar esta sessão."

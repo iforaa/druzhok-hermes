@@ -817,6 +817,10 @@ DEFAULT_CONFIG = {
 
     "display": {
         "compact": False,
+        # Messaging bots hosted for non-technical end users: replies the gateway builds itself leave out
+        # diagnostics (session info, CLI tips, shell commands), /start greets, and session-state commands
+        # stay behind the slash-access gate while busy (gateway/run_config_loaders.py _load_end_user_mode).
+        "end_user_mode": False,
         "personality": "",
         "resume_display": "full",
         # Recap tuning for /resume and startup resume.

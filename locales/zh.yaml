@@ -443,6 +443,8 @@ gateway:
     state_no: "否"
     queued: "**排队的后续：** {count}"
     platforms: "**已连接平台：** {platforms}"
+  start:
+    greeting: "👋 你好！发文字或语音消息都可以，想说什么都行。/help — 我能做什么。"
   stop:
     stopped_pending: "⚡ 已停止。代理尚未启动 — 你可以继续此会话。"
     stopped: "⚡ 已停止。你可以继续此会话。"

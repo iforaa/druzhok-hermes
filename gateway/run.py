@@ -2990,8 +2990,10 @@ def _format_concise_process_notification(
     session_id: str, command: str, exit_code, output: str, duration_seconds=None) -> str:
     """One-line completion message for ``concise`` display mode; failure appends a short output tail."""
     ok = exit_code in {0, None}
+    # End users (display.end_user_mode) see the status only: no shell command, exit code or output tail.
+    end_user = GatewayConfigLoadersMixin._load_end_user_mode()
     parts = [t("gateway.background.task_finished") if ok else t("gateway.background.task_failed")]
-    short_cmd = _shorten_command_for_display(command)
+    short_cmd = "" if end_user else _shorten_command_for_display(command)
     if short_cmd:
         parts.append(f"— `{short_cmd}`")
     details = []
@@ -3003,12 +3005,12 @@ def _format_concise_process_notification(
             details.append(f"{secs // 60}m {secs % 60}s")
         else:
             details.append(f"{secs}s")
-    if not ok:
+    if not ok and not end_user:
         details.append(t("gateway.background.exit_code", code=exit_code))
     if details:
         parts.append(f"({', '.join(details)})")
     text = " ".join(parts)
-    if not ok and output:
+    if not ok and output and not end_user:
         tail_lines = [ln for ln in output.strip().splitlines() if ln.strip()][-5:]
         tail = "\n".join(tail_lines)
         if len(tail) > 500:

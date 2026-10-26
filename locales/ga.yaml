@@ -443,6 +443,8 @@ gateway:
     state_no: "Níl"
     queued: "**Tascanna i scuaine:** {count}"
     platforms: "**Ardáin Cheangailte:** {platforms}"
+  start:
+    greeting: "👋 Dia duit! Scríobh aon rud chugam — téacs nó teachtaireacht ghutha. /help — cad is féidir liom a dhéanamh."
   stop:
     stopped_pending: "⚡ Stoptha. Ní raibh an gníomhaire tosaithe fós — is féidir leat leanúint leis an seisiún seo."
     stopped: "⚡ Stoptha. Is féidir leat leanúint leis an seisiún seo."

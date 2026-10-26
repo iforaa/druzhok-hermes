@@ -447,6 +447,8 @@ gateway:
     state_no: "No"
     queued: "**Queued follow-ups:** {count}"
     platforms: "**Connected Platforms:** {platforms}"
+  start:
+    greeting: "👋 Hi! Write me anything — text or a voice message. /help — what I can do."
   stop:
     stopped_pending: "⚡ Stopped. The agent hadn't started yet — you can continue this session."
     stopped: "⚡ Stopped. You can continue this session."

@@ -186,9 +186,10 @@ class GatewaySessionCommandsMixin:
         await self._fire_session_reset_hooks(source, session_key, _old_sid,
                                              new_entry.session_id if new_entry else None)
         # Scoped to the profile serving this source so a multiplexed /new banner reports the
-        # profile's model, not the base config's.
+        # profile's model, not the base config's. End users get no diagnostics (display.end_user_mode).
+        end_user = self._load_end_user_mode()
         try:
-            session_info = await asyncio.to_thread(self._reset_notice_session_info, source)
+            session_info = "" if end_user else await asyncio.to_thread(self._reset_notice_session_info, source)
         except Exception:
             session_info = ""
         if new_entry:
@@ -218,7 +219,7 @@ class GatewaySessionCommandsMixin:
             pass
         try:
             from hermes_cli.tips import get_random_tip
-            _tip_line = t("gateway.reset.tip", tip=get_random_tip())
+            _tip_line = "" if end_user else t("gateway.reset.tip", tip=get_random_tip())
         except Exception:
             _tip_line = ""
         body = f"{header}\n\n{session_info}" if session_info else header

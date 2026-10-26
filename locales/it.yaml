@@ -443,6 +443,8 @@ gateway:
     state_no: "No"
     queued: "**Follow-up in coda:** {count}"
     platforms: "**Piattaforme connesse:** {platforms}"
+  start:
+    greeting: "👋 Ciao! Scrivimi quello che vuoi, con un testo o un vocale. /help: cosa so fare."
   stop:
     stopped_pending: "⚡ Fermato. L'agente non era ancora partito — puoi continuare questa sessione."
     stopped: "⚡ Fermato. Puoi continuare questa sessione."

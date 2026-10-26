@@ -443,6 +443,8 @@ gateway:
     state_no: "Nee"
     queued: "**Opgehoopte opvolge:** {count}"
     platforms: "**Verbinde Platforms:** {platforms}"
+  start:
+    greeting: "👋 Hallo! Skryf vir my enigiets — teks of 'n stemboodskap. /help — wat ek kan doen."
   stop:
     stopped_pending: "⚡ Gestop. Die agent het nog nie begin nie — jy kan met hierdie sessie voortgaan."
     stopped: "⚡ Gestop. Jy kan met hierdie sessie voortgaan."

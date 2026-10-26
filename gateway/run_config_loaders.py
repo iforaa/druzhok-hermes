@@ -233,6 +233,12 @@ class GatewayConfigLoadersMixin:
         from gateway.run import _load_gateway_config
         return is_truthy_value(cfg_get(_load_gateway_config(), "display", "show_reasoning"), default=False)
 
+    @staticmethod
+    def _load_end_user_mode() -> bool:
+        """``display.end_user_mode`` toggle (bots hosted for non-technical end users)."""
+        from gateway.run import _load_gateway_config
+        return is_truthy_value(cfg_get(_load_gateway_config(), "display", "end_user_mode"), default=False)
+
     @classmethod
     def _load_busy_input_mode(cls) -> str:
         """Gateway drain-time busy-input behavior from env/config (default ``interrupt``)."""

@@ -443,6 +443,8 @@ gateway:
     state_no: "いいえ"
     queued: "**キュー内の後続:** {count}"
     platforms: "**接続プラットフォーム:** {platforms}"
+  start:
+    greeting: "👋 こんにちは！テキストでもボイスメッセージでも、何でも送ってください。/help — できること。"
   stop:
     stopped_pending: "⚡ 停止しました。エージェントはまだ開始していません — このセッションを続行できます。"
     stopped: "⚡ 停止しました。このセッションを続行できます。"

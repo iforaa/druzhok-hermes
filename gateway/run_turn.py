@@ -25,6 +25,7 @@ from gateway.config import Platform
 from gateway.media_repair import repair_explicit_computer_use_media_paths
 from gateway.platforms.base import BasePlatformAdapter, ProcessingOutcome
 from gateway.platforms.event import MessageEvent
+from gateway.run_config_loaders import GatewayConfigLoadersMixin
 from gateway.response_filters import (
     display_kind_for_event, is_machinery_display_kind, reply_expected_metadata, silence_allowed,
 )
@@ -563,7 +564,9 @@ class GatewayTurnMixin:
             if adapter:
                 notice = t("gateway.session.auto_reset_notice")
                 with suppress(Exception):
-                    session_info = await asyncio.to_thread(self._reset_notice_session_info, source)
+                    session_info = (
+                        "" if GatewayConfigLoadersMixin._load_end_user_mode()
+                        else await asyncio.to_thread(self._reset_notice_session_info, source))
                     if session_info:
                         notice = f"{notice}\n\n{session_info}"
                 await adapter.send(source.chat_id, notice, metadata=self._thread_metadata_for_source(source))
@@ -1540,10 +1543,13 @@ class GatewayTurnMixin:
         # text with the CLI explainer and the desktop (agent/turn_explainers.py) so the user
         # reads the same words on every surface.
         if response == "(empty)" and not _intentional_silence:
-            from agent.turn_explainers import EMPTY_RESPONSE_EXPLANATION
+            from agent.turn_explainers import EMPTY_RESPONSE_EXPLANATION, empty_response_explanation
 
             _model = str(agent_result.get("model") or "").strip() or t("gateway.errors.empty_response_model_label")
-            response = t("gateway.shared.warn_passthrough", error=EMPTY_RESPONSE_EXPLANATION.format(model=_model))
+            # End users read the catalog text (explainer.empty_response), which a locale overlay can reword.
+            _explanation = (empty_response_explanation(_model) if GatewayConfigLoadersMixin._load_end_user_mode()
+                            else EMPTY_RESPONSE_EXPLANATION.format(model=_model))
+            response = t("gateway.shared.warn_passthrough", error=_explanation)
         agent_messages = agent_result.get("messages", [])
         logger.info(
             "response ready: platform=%s chat=%s session=%s time=%.1fs api_calls=%d response=%d chars",

@@ -443,6 +443,8 @@ gateway:
     state_no: "Nein"
     queued: "**Wartende Folgenachrichten:** {count}"
     platforms: "**Verbundene Plattformen:** {platforms}"
+  start:
+    greeting: "👋 Hallo! Schreib mir, was du willst – als Text oder Sprachnachricht. /help – was ich kann."
   stop:
     stopped_pending: "⚡ Gestoppt. Der Agent hatte noch nicht begonnen — Sie können diese Sitzung fortsetzen."
     stopped: "⚡ Gestoppt. Sie können diese Sitzung fortsetzen."
