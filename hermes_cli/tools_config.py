@@ -91,6 +91,8 @@ CONFIGURABLE_TOOLSETS = [
     ("discord_admin",   "🛡️  Discord Server Admin",    "list channels/roles, pin, assign roles"),
     ("yuanbao",          "🤖 Yuanbao",                  "group info, member queries, DM"),
     ("computer_use",     "🖱️  Computer Use (macOS/Windows/Linux)", "background desktop control via cua-driver"),
+    # Druzhok: listing it here is what keeps _recover_platform_native_toolsets from adding it to a saved list.
+    ("sites",            "🌍 Sites",                    "site_publish, site_delete"),
 ]
 
 
