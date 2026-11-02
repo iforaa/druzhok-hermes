@@ -124,6 +124,17 @@ def _resolve_lineage(db, session_id: str) -> str:
     return _resolve_to_parent(db, session_id)[0]
 
 
+def _holds_group_text(db, session_id: str) -> bool:
+    """Druzhok: every shape below asks this before returning a session's text. A stranger wrote in a
+    Telegram group, and this tool runs in turns with terminal and memory. An ancestor counts, because
+    compression and branching carry its text into the child; a failed lookup counts too."""
+    try:
+        return db.session_lineage_has_telegram_group(session_id) is not False
+    except Exception:
+        logging.warning("Group lookup failed for %s; hiding it", session_id, exc_info=True)
+        return True
+
+
 def _parse_iso_bound(value: Optional[str]) -> Optional[int]:
     """Parse an ISO date/datetime OR a relative duration into a UTC unix timestamp.
 
@@ -278,7 +289,7 @@ def _title_match_result(db, query: str, current_lineage_root: Optional[str]) -> 
     title_query = query.strip().strip("`'\"")  # models often quote a remembered title
     session_id = title_query and _quiet(lambda: db.resolve_session_by_title(title_query), None,
                                         "resolve_session_by_title failed for %r", title_query)
-    if not session_id:
+    if not session_id or _holds_group_text(db, session_id):
         return None
     lineage_root = _resolve_lineage(db, session_id)
     # Same-lineage title hits are in-context only while the session is live;
@@ -368,7 +379,8 @@ def _discover(db, query: str, role_filter: Optional[list[str]], limit: int, sort
             title_result = None
     raw_results, err = _loud(lambda: db.search_messages(
         query=query, role_filter=role_filter or ["user", "assistant"],
-        exclude_sources=list(_HIDDEN_SESSION_SOURCES), limit=_DISCOVER_SCAN_LIMIT, offset=0, sort=sort,
+        exclude_sources=list(_HIDDEN_SESSION_SOURCES), exclude_telegram_groups=True,
+        limit=_DISCOVER_SCAN_LIMIT, offset=0, sort=sort,
         fields=_DISCOVER_SEARCH_FIELDS, after_ts=after_ts, before_ts=before_ts), "FTS5 search failed: %s", "Search failed")
     if err:
         return err
@@ -395,7 +407,7 @@ def _discover(db, query: str, role_filter: Optional[list[str]], limit: int, sort
         if len(seen_sessions) >= limit:
             break
         raw_sid, resolved_sid = r["session_id"], _resolve_lineage(db, r["session_id"])
-        if raw_sid in excluded_roots or resolved_sid in excluded_roots:
+        if raw_sid in excluded_roots or resolved_sid in excluded_roots or _holds_group_text(db, raw_sid):
             continue
         # Skip the current session lineage — UNLESS the hit's transcript has left live context. Three
         # sub-cases: Legacy compression rotation: the FTS hit lives in a session that itself ended with
@@ -447,7 +459,7 @@ def _resolve_profile_db(profile: str):
 def _read_session(db, session_id: str, head: int = 20, tail: int = 10, link_profile: str | None = None) -> str:
     """Read shape: whole session, or ``head`` + ``tail`` messages with a scroll pointer."""
     meta = _get_session_meta(db, session_id)
-    if not meta:
+    if not meta or _holds_group_text(db, session_id):
         return tool_error(f"session_id not found: {session_id}", success=False)
     rows, err = _loud(lambda: db.get_messages(session_id), "get_messages failed for %s: %s", "failed to load session",
                       session_id)
@@ -491,7 +503,8 @@ def _list_recent_sessions(db, limit: int, current_session_id: str | None = None,
             raise RuntimeError("session database does not support bounded recent-session browse")
         sessions = bounded_list(
             limit=limit + 15,  # extra so we can skip current / compression roots
-            exclude_sources=list(_HIDDEN_SESSION_SOURCES), timeout_seconds=3.0)
+            exclude_sources=list(_HIDDEN_SESSION_SOURCES), exclude_telegram_groups=True, timeout_seconds=3.0)
+        sessions = [s for s in sessions if not _holds_group_text(db, s.get("id", ""))]
         current_root, has_compression_hop = (
             _resolve_to_parent(db, current_session_id) if current_session_id else (None, False))
         # Compression continuation: the root was summarised into the live child, so hide
@@ -539,6 +552,8 @@ def _scroll(db, session_id: str, around_message_id: int, window: int = 5,
     # Locate the anchor BEFORE the current-lineage guard (see _anchor_in_live_context).
     anchor_state = _get_message_storage_state(db, around_message_id)
     owning = (anchor_state or {}).get("session_id")
+    if _holds_group_text(db, session_id) or (owning and _holds_group_text(db, owning)):
+        return tool_error(f"session_id not found: {session_id}", success=False)
     if current_session_id and _anchor_in_live_context(db, anchor_state, owning or session_id, current_session_id):
         return tool_error("scroll rejected: anchor lives in the current session lineage (already in your active context)", success=False)
     session_meta = _get_session_meta(db, session_id)
