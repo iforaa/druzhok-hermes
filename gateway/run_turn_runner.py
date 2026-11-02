@@ -1,3 +1,4 @@
+# health: allow FILE_LINES -- druzhok fork: small group-limits hooks, kept in place so update-hermes can carry them
 """Per-turn callback runner (progress/status/voice/run_sync) for the gateway agent turn.
 
 ``TurnRunner`` owns the per-turn callbacks ``GatewayRunner._run_agent_inner`` binds. ``gateway.run``
@@ -23,6 +24,7 @@ from agent.i18n import t
 from agent.interrupt_compat import _accepts_keyword
 from agent.replay_cleanup import canonicalize_replay_history
 from gateway.config import Platform
+from gateway.group_limits import is_limited_group, refuse_unlimited_runtime
 from gateway.media_repair import repair_explicit_computer_use_media_paths
 from gateway.platforms.base import BasePlatformAdapter
 from gateway.platforms.base_exec_approval import ea_default_reason_text
@@ -1112,12 +1114,13 @@ class TurnRunner:
         ctx = self._ctx
         runner = self._runner
         src = ctx.source
-        return ctx.AIAgent(
+        limited = is_limited_group(src)
+        agent = ctx.AIAgent(
             model=turn_route["model"], **turn_route["runtime"], **_checkpoint_agent_kwargs(ctx.user_config),
             max_iterations=max_iterations, quiet_mode=True, verbose_logging=False,
             enabled_toolsets=ctx.enabled_toolsets, disabled_toolsets=ctx.disabled_toolsets,
             ephemeral_system_prompt=combined_ephemeral or None,
-            prefill_messages=runner._prefill_messages or None,
+            prefill_messages=None if limited else runner._prefill_messages or None,
             reasoning_config=reasoning_config, service_tier=runner._service_tier,
             request_overrides=turn_route.get("request_overrides"),
             providers_allowed=pr.get("only"), providers_ignored=pr.get("ignore"), providers_order=pr.get("order"),
@@ -1130,24 +1133,32 @@ class TurnRunner:
             session_db=getattr(runner._session_db, "_db", runner._session_db),
             # Reload from disk — do not reuse the startup snapshot.
             # See #60955.
-            fallback_model=self._runner._refresh_fallback_model(),
+            # Druzhok: a group turn cannot fail over onto a runtime the limits do not reach.
+            fallback_model=None if limited else self._runner._refresh_fallback_model(),
             skip_context_files=skip_context_files,
             # Keep the persona even with minimal context: soul identity is one small file.
             load_soul_identity=True,
+            skip_memory=limited, skip_background_review=limited,
         )
+        if limited:
+            agent.group_limited = True
+            agent.compression_checkpoint_required = False  # it guards the owner's memory, which a group has none of
+        return agent
 
     def _resolve_turn_agent(self, turn_route, platform_key, combined_ephemeral, max_iterations, reasoning_config, pr):
         """Reuse this session's cached AIAgent (frozen system prompt + tool schemas → prompt cache
         hits) or build a fresh one. Returns (agent, reused_cached_agent)."""
         ctx = self._ctx
         runner = self._runner
-        skip_context_files = self._skip_context_files(platform_key)
+        limited = is_limited_group(ctx.source)
+        refuse_unlimited_runtime(ctx.source, turn_route["runtime"])
+        skip_context_files = limited or self._skip_context_files(platform_key)
         sig = runner._agent_config_signature(
             turn_route["model"], turn_route["runtime"], ctx.enabled_toolsets, combined_ephemeral,
             cache_keys=runner._extract_cache_busting_config(ctx.user_config),
             user_id=getattr(ctx.source, "user_id", None),
             user_id_alt=getattr(ctx.source, "user_id_alt", None),
-            skip_context_files=skip_context_files,
+            skip_context_files=skip_context_files, skip_memory=limited,
         )
         cache_lock = getattr(runner, "_agent_cache_lock", None)
         cache = getattr(runner, "_agent_cache", None)
@@ -1158,7 +1169,7 @@ class TurnRunner:
         # Lock released — refresh the reused agent's fallback chain from disk OUTSIDE the cache lock
         # (disk I/O under the lock stalls the idle-sweep watcher and Discord heartbeats). A chain
         # configured after caching must reach the next turn; per-session serialization keeps it safe.
-        if found.reused and agent is not None:
+        if found.reused and agent is not None and not limited:
             self._runner._apply_fallback_chain_to_agent(agent, runner._refresh_fallback_model())
         if found.evicted is not None:
             self._release_evicted_agent(found.evicted)

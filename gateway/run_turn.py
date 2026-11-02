@@ -1,3 +1,4 @@
+# health: allow FILE_LINES -- druzhok fork: small group-limits hooks, kept in place so update-hermes can carry them
 """Agent-turn execution for GatewayRunner: _handle_message_with_agent, _run_agent*, proxy path,
 background tasks, MCP reload. Bound onto ``GatewayRunner`` via the MRO; ``gateway.run`` internals
 are imported lazily inside method bodies (import cycle) so ``patch("gateway.run.X")`` still works.
@@ -1268,11 +1269,16 @@ class GatewayTurnMixin:
         _hyg_checkpoint_required = _is_truthy(
             ((_load_cfg() or {}).get("compression") or {}).get("checkpoint_required"), default=False,
         )
+        # Druzhok: a group transcript never reaches the owner's memory provider through a checkpoint.
+        from gateway.group_limits import is_limited_group
         _hyg_agent = AIAgent(
             **_hyg_runtime, model=_hyg_model, max_iterations=4, quiet_mode=True,
-            skip_memory=not _hyg_checkpoint_required, enabled_toolsets=["memory"],
+            skip_memory=not _hyg_checkpoint_required or is_limited_group(session_entry.origin),
+            enabled_toolsets=["memory"],
             session_id=session_entry.session_id, session_db=_hyg_session_db,
         )
+        if is_limited_group(session_entry.origin):
+            _hyg_agent.compression_checkpoint_required = False
         _seed_hygiene_system_prompt(_hyg_agent, _hyg_session_row)
         # The stamp only marks this agent as no real surface. Since #104414 Platform is not a
         # restore-identity field, so it no longer forces the next live turn to rebuild; the seed's
@@ -2395,12 +2401,15 @@ class GatewayTurnMixin:
         """Enabled toolsets for an agent run, honoring an adapter ``toolsets_for_source()`` override
         validated through the SAME ``_get_platform_tools`` path (unknown / platform-restricted
         toolsets dropped, not trusted)."""
+        from gateway.group_limits import is_limited_group, resolve_group_toolsets
         from hermes_cli.tools_config import _get_platform_tools
         try:
             adapter = self._delivery_adapter_for(source)
             override = adapter.toolsets_for_source(source) if adapter is not None else None
         except Exception:
             override = None
+        if is_limited_group(source):
+            return resolve_group_toolsets(user_config, platform_key, override)
         if override and isinstance(override, list):
             pts = dict(user_config.get("platform_toolsets") or {})
             pts[platform_key] = [str(x) for x in override]
@@ -2420,6 +2429,7 @@ class GatewayTurnMixin:
         media_types: Optional[list[str]] = None,
     ) -> None:
         """Execute a background agent task and deliver the result to the chat."""
+        from gateway.group_limits import is_limited_group
         from gateway.run import (
             _checkpoint_agent_kwargs, _current_max_iterations, _load_gateway_config,
             _platform_config_key,
@@ -2451,7 +2461,7 @@ class GatewayTurnMixin:
 
             # Enrich the prompt with image descriptions (same as the main flow).
             enriched_prompt = prompt
-            image_paths = [
+            image_paths = [] if is_limited_group(source) else [
                 path for i, path in enumerate(media_urls)
                 if (media_types[i] if i < len(media_types) else "").startswith("image/")
             ]
@@ -2460,6 +2470,9 @@ class GatewayTurnMixin:
                     enriched_prompt = await self._enrich_message_with_vision(prompt, image_paths)
                 except Exception as e:
                     logger.warning("Background task vision enrichment failed: %s", e)
+
+            from gateway.group_limits import group_agent_kwargs, refuse_unlimited_runtime
+            refuse_unlimited_runtime(source, turn_route["runtime"])
 
             def run_sync():
                 agent = AIAgent(
@@ -2488,7 +2501,8 @@ class GatewayTurnMixin:
                     session_db=getattr(self._session_db, "_db", self._session_db),
                     # Reload from disk — do not reuse the startup snapshot.
                     # See #60955.
-                    fallback_model=self._refresh_fallback_model(),
+                    fallback_model=None if is_limited_group(source) else self._refresh_fallback_model(),
+                    **group_agent_kwargs(source),
                 )
                 try:
                     return agent.run_conversation(user_message=enriched_prompt, task_id=task_id)
@@ -4284,6 +4298,8 @@ class GatewayTurnMixin:
 
         Keys: "final_response", "messages", "api_calls", "completed"."""
         if self._get_proxy_url():
+            from gateway.group_limits import refuse_proxied_group
+            refuse_proxied_group(source)
             return await self._run_agent_via_proxy(
                 message=message, context_prompt=context_prompt, history=history, source=source,
                 session_id=session_id, session_key=session_key, run_generation=run_generation,

@@ -65,6 +65,7 @@ async def _run_with_refused_followup(monkeypatch, tmp_path, agent_cls, adapter_c
     return await _run_with_agent(
         monkeypatch, tmp_path, agent_cls, session_id="sess-refused-followup",
         pending_text="@file:/etc/shadow please", adapter_cls=adapter_cls,
+        chat_id="1001", chat_type="dm",  # druzhok: a Telegram group expands no @ reference
     )
 
 
@@ -73,7 +74,7 @@ async def _completion_seam(adapter, agent_result, response):
     caller sends the body again. Returns the text the caller would send (None = suppressed)."""
     runner = _make_runner(adapter)
     source = SessionSource(
-        platform=adapter.platform, chat_id="-1001", chat_type="group", thread_id="17585",
+        platform=adapter.platform, chat_id="1001", chat_type="dm", thread_id="17585",
     )
     event = MessageEvent(text="hi", message_type=MessageType.TEXT, source=source, message_id="1")
 
