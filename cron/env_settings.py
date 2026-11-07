@@ -24,3 +24,20 @@ def cron_env_setting(name: str, default: str = "") -> str:
         scope = load_env_file(get_hermes_home() / ".env")
     value = scope.get(name)
     return default if value is None else str(value)
+
+
+_ONESHOT_LATE_RUN_DEFAULT_SECONDS = 120
+
+
+def oneshot_late_run_seconds() -> int:
+    """How late a due one-shot may still run before the scheduler retires it unrun.
+
+    ``HERMES_CRON_ONESHOT_LATE_S`` (druzhok patch): a bot that sleeps in a host queue can wake long
+    after a reminder's time, and the reminder should still fire. Absent, non-integer or below 120
+    means 120, the upstream window. Run-time retire paths only: create/update/resume/re-arm keep
+    ``ONESHOT_GRACE_SECONDS``, so a time in the past is still refused."""
+    try:
+        value = int(cron_env_setting("HERMES_CRON_ONESHOT_LATE_S").strip())
+    except ValueError:
+        return _ONESHOT_LATE_RUN_DEFAULT_SECONDS
+    return max(value, _ONESHOT_LATE_RUN_DEFAULT_SECONDS)

@@ -20,7 +20,9 @@ Hardening invariants — each guards a real failure; don't weaken without answer
   session is hard-interrupted so it cannot monopolise the scheduler, while a long-but-active job
   is never cut off. Attached scripts (pre-run or `no_agent`) are bounded separately by the script
   timeout (`_DEFAULT_SCRIPT_TIMEOUT`, 3600s).
-- Catch-up window = half the period, clamped to 120s–2h; 120s grace for missed one-shots.
+- Catch-up window = half the period, clamped to 120s–2h; 120s grace for one-shots at
+  create/update/resume. Run-time retire window = `oneshot_late_run_seconds()`
+  (`HERMES_CRON_ONESHOT_LATE_S`, druzhok patch, min 120s) — intentional, not a regression.
 - Every recurring occurrence is accounted for: `tick()` advances `next_run_at` BEFORE dispatch
   (at-most-once across a mid-run crash) and stamps `pending_slot` in the same save; a scan that
   finds the stamp with a dead owner restores the instant ONCE (`cron/occurrences.py`), the

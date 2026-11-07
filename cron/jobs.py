@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 from hermes_constants import get_hermes_home
 from cron.constants import CLAIM_TTL_INACTIVITY_HEADROOM, FIRE_CLAIM_SKEW_SECONDS, FIRE_CLAIM_TTL_SECONDS
-from cron.env_settings import cron_env_setting
+from cron.env_settings import cron_env_setting, oneshot_late_run_seconds
 from cron.scheduler_ownership import _claim_owner_is_dead
 from cron import store_health
 from typing import Optional, Dict, List, Any, Callable, Set, Tuple, Union, Collection
@@ -2571,7 +2571,7 @@ def _write_missed_oneshot_diagnostic(job: dict[str, Any], next_run: str) -> None
         f"- job id: {job.get('id')}\n"
         f"- name: {job.get('name')}\n"
         f"- scheduled run time: {next_run}\n"
-        f"- grace window: {ONESHOT_GRACE_SECONDS}s\n"
+        f"- grace window: {oneshot_late_run_seconds()}s\n"
         f"- removed at: {_hermes_now().isoformat()}\n\n"
         "This one-shot's run time is more than the grace window in the "
         "past (scheduler down past the window, host asleep, or jobs.json "
@@ -3146,16 +3146,16 @@ def _fast_forward_missed_recurring(d: _DueJob, grace: int) -> bool:
 
 
 def _retire_expired_oneshot(d: _DueJob) -> bool:
-    """One-shot grace gate; True when the job must not fire this tick.
+    """One-shot late-run gate (``oneshot_late_run_seconds``); True when it must not fire this tick.
 
-    A one-shot beyond the grace window must never fire (create/update/resume reject such schedules
+    A one-shot beyond that window must never fire (create/update/resume reject such schedules
     and recovery never revives them; only the due scan used to dispatch them hours late). With no
     claim stamped, retire it with a diagnostic (never silently delete). A claim may mean a run is
     still in flight elsewhere — skip but keep the record so its mark_job_run can land."""
-    if _elapsed_seconds(d.scan.now, d.next_run_dt) <= ONESHOT_GRACE_SECONDS:
+    if _elapsed_seconds(d.scan.now, d.next_run_dt) <= (late_window := oneshot_late_run_seconds()):
         return False
     # Due during an outage of its store: it was skipped, not missed; fire it once on recovery.
-    if store_health.outage_covers(_current_cron_store().cron_dir, d.next_run_dt.timestamp(), ONESHOT_GRACE_SECONDS):
+    if store_health.outage_covers(_current_cron_store().cron_dir, d.next_run_dt.timestamp(), late_window):
         return False
     claim = d.job.get("run_claim")
     # An outage-covered claim that never reached its fire claim never started: it stays covered.
@@ -3288,7 +3288,7 @@ def _evaluate_due_job(job: dict[str, Any], scan: _DueScan, run_claim_ttl: float)
         # fixed window is not enough for a run that outlives a tick. The other process sees the
         # fresh claim and skips; mark_job_run() clears it. The TTL only covers a tick that DIES.
         claim = {"at": now.isoformat(), "by": _machine_id()}
-        if _elapsed_seconds(now, d.next_run_dt) > ONESHOT_GRACE_SECONDS:  # only an outage lets it through
+        if _elapsed_seconds(now, d.next_run_dt) > oneshot_late_run_seconds():  # only an outage lets it through
             claim["outage"] = True
         job["run_claim"] = claim
         scan.persist(job["id"], run_claim=claim)
