@@ -216,6 +216,53 @@ async def test_replay_is_admitted_once_before_dispatch(monkeypatch, tmp_path, ki
             assert len(delivered) == 2
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["text", "photo"])
+async def test_edited_group_caption_matches_text_admission(monkeypatch, tmp_path, kind):
+    download = AsyncMock(return_value=SimpleNamespace(
+        file_path="offline.png", download_as_bytearray=AsyncMock(return_value=bytearray(b"offline"))))
+    monkeypatch.setattr(PhotoSize, "get_file", download)
+    cached_path = str(tmp_path / "photo.png")
+    monkeypatch.setattr(tg_adapter, "cache_image_from_bytes_async", AsyncMock(return_value=cached_path))
+    async with connected(monkeypatch, extra={
+        "require_mention": True, "mention_patterns": [r"(?<!\w)Друг(?!\w)"],
+        "allowed_chats": ["42"], "group_allowed_chats": ["42"],
+    }) as (adapter, app, delivered):
+        adapter._text_batch_delay_seconds = adapter._media_batch_delay_seconds = 0
+
+        def incoming(uid, text, *, edited=False):
+            payload = update(app.bot, uid, kind, group=True, text=text, edited=edited).to_dict()
+            if kind == "photo":
+                payload["edited_message" if edited else "message"]["caption"] = text
+            return Update.de_json(payload, app.bot)
+
+        async def flush():
+            await asyncio.gather(*adapter._pending_text_batch_tasks.values(),
+                                 *adapter._pending_photo_batch_tasks.values())
+
+        await app.process_update(incoming(10, "посмотри"))
+        await flush()
+        assert delivered == []
+
+        addressed = incoming(11, "Друг, посмотри", edited=True)
+        assert addressed.message is None
+        await app.process_update(addressed)
+        await app.process_update(addressed)
+        await flush()
+        assert len(delivered) == 1
+
+        await app.process_update(incoming(12, "Друг, посмотри ещё", edited=True))
+        await flush()
+        assert [event.message_id for event in delivered] == ["472", "472"]
+        assert [event.platform_update_id for event in delivered] == [11, 12]
+        assert [event.text for event in delivered] == ["Друг, посмотри", "Друг, посмотри ещё"]
+        assert all(event.source.chat_id == "42" for event in delivered)
+        if kind == "photo":
+            assert download.await_count == 2
+            assert all(event.message_type == MessageType.PHOTO for event in delivered)
+            assert all(event.media_urls == [cached_path] for event in delivered)
+
+
 async def _check_sticker_handoff(monkeypatch, adapter, app, delivered, stage):
     from gateway import sticker_cache
     from tools import vision_tools
