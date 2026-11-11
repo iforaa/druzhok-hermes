@@ -1449,7 +1449,7 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
         if private_dm_topic_send:
             should_thread = reply_to_source is not None and self._reply_to_mode != "off"
         else:
-            should_thread = self._should_thread_reply(reply_to_source, index)
+            should_thread = self._should_thread_reply(reply_to_source, index, chat_id=chat_id, metadata=metadata)
         reply_to_id = int(reply_to_source) if should_thread and reply_to_source else None
         return private_dm_topic_send, dm_topic_reply_to_off, reply_to_id
 
@@ -3447,9 +3447,15 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
             await self._await_disconnect_step(asyncio.shield(flush), _DISCONNECT_STEP_TIMEOUT, "update-receipt flush")
         logger.info("[%s] Disconnected from Telegram", self.name)
 
-    def _should_thread_reply(self, reply_to: Optional[str], chunk_index: int) -> bool:
+    def _should_thread_reply(
+        self, reply_to: Optional[str], chunk_index: int, *, chat_id: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None) -> bool:
         """Whether this chunk (0 = first) should reply-thread to ``reply_to``, per reply_to_mode."""
+        from plugins.platforms.telegram.telegram_reply_policy import suppress_private_reply_quote
+
         if not reply_to:
+            return False
+        if suppress_private_reply_quote(self, chat_id, metadata):
             return False
         mode = self._reply_to_mode
         if mode == "off":
@@ -5134,7 +5140,10 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
     def _media_send_kwargs(
         self, chat_id: str, reply_to: Optional[str], metadata: Optional[dict[str, Any]]) -> tuple[Optional[int], dict[str, Any]]:
         """Return ``(reply_to_id, base_kwargs)`` shared by every native media send."""
-        reply_to_id = self._reply_to_message_id_for_send(reply_to, metadata, reply_to_mode=self._reply_to_mode)
+        from plugins.platforms.telegram.telegram_reply_policy import suppress_private_reply_quote
+
+        reply_to_id = (None if suppress_private_reply_quote(self, chat_id, metadata) else
+                       self._reply_to_message_id_for_send(reply_to, metadata, reply_to_mode=self._reply_to_mode))
         thread_kwargs = self._thread_kwargs_for_send(
             chat_id, self._metadata_thread_id(metadata), metadata, reply_to_message_id=reply_to_id, reply_to_mode=self._reply_to_mode)
         return reply_to_id, {
