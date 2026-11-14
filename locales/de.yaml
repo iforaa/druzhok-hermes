@@ -456,6 +456,8 @@ gateway:
   discard:
     nothing: "Nichts zu verwerfen: In diesem Chat ging bei einem Neustart kein Turn verloren."
     done: "🗑️ {count} verlorene(n) Turn(s) verworfen; sie wurden nicht erneut ausgeführt. Deine gespeicherten Nachrichten werden jetzt beantwortet."
+  start:
+    greeting: "👋 Hallo! Schreib mir, was du willst – als Text oder Sprachnachricht. /help – was ich kann."
   stop:
     stopped_pending: "⚡ Gestoppt. Der Agent hatte noch nicht begonnen — Sie können diese Sitzung fortsetzen."
     stopped: "⚡ Gestoppt. Sie können diese Sitzung fortsetzen."

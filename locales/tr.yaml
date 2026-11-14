@@ -456,6 +456,8 @@ gateway:
   discard:
     nothing: "Atılacak bir şey yok: bu sohbette yeniden başlatmada kaybolan bir tur yok."
     done: "🗑️ Kaybolan {count} tur atıldı; yeniden çalıştırılmadı. Kaydedilen mesajların şimdi yanıtlanacak."
+  start:
+    greeting: "👋 Merhaba! Bana istediğini yaz — metin ya da sesli mesaj. /help — neler yapabileceğim."
   stop:
     stopped_pending: "⚡ Durduruldu. Ajan henüz başlamamıştı — bu oturuma devam edebilirsin."
     stopped: "⚡ Durduruldu. Bu oturuma devam edebilirsin."

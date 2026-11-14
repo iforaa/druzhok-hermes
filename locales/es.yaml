@@ -456,6 +456,8 @@ gateway:
   discard:
     nothing: "Nada que descartar: este chat no tiene ningún turno perdido en un reinicio."
     done: "🗑️ Se descartaron {count} turno(s) perdido(s); no se volvieron a ejecutar. Tus mensajes guardados se responderán ahora."
+  start:
+    greeting: "👋 ¡Hola! Escríbeme lo que quieras: texto o mensaje de voz. /help: lo que sé hacer."
   stop:
     stopped_pending: "⚡ Detenido. El agente aún no había comenzado — puedes continuar esta sesión."
     stopped: "⚡ Detenido. Puedes continuar esta sesión."

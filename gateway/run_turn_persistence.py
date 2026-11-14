@@ -23,6 +23,7 @@ from gateway.config import Platform
 from gateway.media_repair import repair_explicit_computer_use_media_paths
 from gateway.platforms.base import BasePlatformAdapter
 from gateway.platforms.event import MessageEvent
+from gateway.run_config_loaders import GatewayConfigLoadersMixin
 from gateway.session import (
     SessionSource, _session_key_namespace, build_channel_continuity_note,
     build_session_context,
@@ -154,10 +155,13 @@ class GatewayTurnPersistenceMixin:
             # peer would take it as a message to answer (#137027).
             response = ""
         if response == "(empty)" and not _intentional_silence:
-            from agent.turn_explainers import EMPTY_RESPONSE_EXPLANATION
+            from agent.turn_explainers import EMPTY_RESPONSE_EXPLANATION, empty_response_explanation
 
             _model = str(agent_result.get("model") or "").strip() or t("gateway.errors.empty_response_model_label")
-            response = t("gateway.shared.warn_passthrough", error=EMPTY_RESPONSE_EXPLANATION.format(model=_model))
+            # End users read the catalog text (explainer.empty_response), which a locale overlay can reword.
+            _explanation = (empty_response_explanation(_model) if GatewayConfigLoadersMixin._load_end_user_mode()
+                            else EMPTY_RESPONSE_EXPLANATION.format(model=_model))
+            response = t("gateway.shared.warn_passthrough", error=_explanation)
         agent_messages = agent_result.get("messages", [])
         logger.info(
             "response ready: platform=%s chat=%s session=%s time=%.1fs api_calls=%d response=%d chars",

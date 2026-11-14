@@ -460,6 +460,8 @@ gateway:
   discard:
     nothing: "Nothing to discard: this chat has no turn lost in a restart."
     done: "🗑️ Discarded {count} lost turn(s); they were not re-run. Your saved messages will be answered now."
+  start:
+    greeting: "👋 Hi! Write me anything — text or a voice message. /help — what I can do."
   stop:
     stopped_pending: "⚡ Stopped. The agent hadn't started yet — you can continue this session."
     stopped: "⚡ Stopped. You can continue this session."

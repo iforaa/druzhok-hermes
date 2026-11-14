@@ -496,6 +496,8 @@ gateway:
   discard:
     nothing: "Rien à ignorer : ce chat n'a aucun tour perdu lors d'un redémarrage."
     done: "🗑️ {count} tour(s) perdu(s) ignoré(s) ; ils n'ont pas été relancés. Vos messages enregistrés vont maintenant recevoir une réponse."
+  start:
+    greeting: "👋 Salut ! Écris-moi ce que tu veux, en texte ou en vocal. /help : ce que je sais faire."
   stop:
     stopped_pending: "⚡ Arrêté. L'agent n'avait pas encore commencé — vous pouvez continuer cette session."
     stopped: "⚡ Arrêté. Vous pouvez continuer cette session."

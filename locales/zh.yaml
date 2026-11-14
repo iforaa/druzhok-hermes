@@ -456,6 +456,8 @@ gateway:
   discard:
     nothing: "没有可丢弃的内容：此聊天没有在重启时丢失的回合。"
     done: "🗑️ 已丢弃 {count} 个丢失的回合；未重新执行。现在会回复你已保存的消息。"
+  start:
+    greeting: "👋 你好！发文字或语音消息都可以，想说什么都行。/help — 我能做什么。"
   stop:
     stopped_pending: "⚡ 已停止。代理尚未启动 — 你可以继续此会话。"
     stopped: "⚡ 已停止。你可以继续此会话。"

@@ -456,6 +456,8 @@ gateway:
   discard:
     nothing: "Niks om weg te gooi nie: hierdie klets het geen beurt wat in 'n herbegin verlore is nie."
     done: "🗑️ {count} verlore beurt(e) weggegooi; hulle is nie weer uitgevoer nie. Jou gestoorde boodskappe word nou beantwoord."
+  start:
+    greeting: "👋 Hallo! Skryf vir my enigiets — teks of 'n stemboodskap. /help — wat ek kan doen."
   stop:
     stopped_pending: "⚡ Gestop. Die agent het nog nie begin nie — jy kan met hierdie sessie voortgaan."
     stopped: "⚡ Gestop. Jy kan met hierdie sessie voortgaan."

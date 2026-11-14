@@ -1168,8 +1168,11 @@ class GatewayBusySessionMixin:
         return t("gateway.pause.paused", suffix=suffix)
 
     async def _busy_start_command(self, event: MessageEvent, quick_key: str, source):
-        # Telegram's /start is a platform ping (bot launch/deep-link), not a user command.
+        # Telegram's /start is a platform ping (bot launch/deep-link), not a user command; end users
+        # (display.end_user_mode) get a greeting instead of silence.
         await _busy_accepted()
+        if self._load_end_user_mode():
+            return t("gateway.start.greeting")
         logger.info("Ignoring /start platform ping for active session %s", quick_key)
         return ""
 

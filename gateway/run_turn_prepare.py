@@ -19,6 +19,7 @@ from gateway.config import Platform
 from gateway.media_repair import repair_explicit_computer_use_media_paths
 from gateway.platforms.base import BasePlatformAdapter
 from gateway.platforms.event import MessageEvent
+from gateway.run_config_loaders import GatewayConfigLoadersMixin
 from gateway.session import (
     SessionSource, _session_key_namespace, build_channel_continuity_note,
     build_session_context,
@@ -577,7 +578,9 @@ class GatewayTurnPrepareMixin:
             if adapter:
                 notice = t("gateway.session.auto_reset_notice")
                 with suppress(Exception):
-                    session_info = await asyncio.to_thread(self._reset_notice_session_info, source)
+                    session_info = (
+                        "" if GatewayConfigLoadersMixin._load_end_user_mode()
+                        else await asyncio.to_thread(self._reset_notice_session_info, source))
                     if session_info:
                         notice = f"{notice}\n\n{session_info}"
                 await adapter.send(source.chat_id, notice, metadata=self._thread_metadata_for_source(source))
