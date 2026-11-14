@@ -964,6 +964,7 @@ class SessionStore(
         """One routing transition for the single-flight owner. All blocking I/O (SQLite SELECTs,
         index rewrite + fsync, recovery queries) runs *outside* ``self._lock``, which protects
         only ``_entries`` / ``_loaded`` mutations."""
+        from gateway.group_limits import is_limited_group
         session_key = self._generate_session_key(source)
         now = _now()
         if not force_new:
@@ -989,7 +990,8 @@ class SessionStore(
         decision = self._apply_route_checks(session_key, checks, force_new, touch_activity, now, source)
 
         # Phase 3 (no lock): recovery + create + save + DB ops.
-        if decision.needs_recover and decision.prev_session_id is None:
+        # Druzhok: a durable row cannot prove it was created under the group limits, so never adopt one.
+        if decision.needs_recover and decision.prev_session_id is None and not is_limited_group(source):
             self._route_recover(decision, session_key, source, now)
         create_kwargs = None
         if decision.entry is None:
@@ -1038,6 +1040,9 @@ class SessionStore(
             checked = entry.session_id == snapshot_sid
             stale_hit = checked and checks.is_stale
             reset_reason = checks.reset_reason if checked else None
+            # Druzhok: a compression-tip heal must not carry an unmarked group session past the limits.
+            if not checked and self._route_reset_reason(entry) == "group_limits":
+                reset_reason = "group_limits"
             if stale_hit:
                 # Stale routing self-heal: drop the entry and fall through to recovery (reopens
                 # agent_close / ws_orphan_reap rows, fresh session for other end_reasons).
@@ -1090,6 +1095,7 @@ class SessionStore(
     ) -> Optional[dict[str, Any]]:
         """Create a candidate outside the lock and publish it only if the key is still vacant;
         returns ``create_session`` kwargs when the candidate won."""
+        from gateway.group_limits import SESSION_MARKER, is_limited_group
         session_id = _new_session_id(now)
         candidate = SessionEntry(
             session_key=session_key, session_id=session_id, created_at=now, updated_at=now,
@@ -1097,6 +1103,7 @@ class SessionStore(
             chat_type=source.chat_type, was_auto_reset=decision.reset_reason is not None,
             auto_reset_reason=decision.reset_reason, reset_had_activity=decision.reset_had_activity,
             prev_session_id=decision.prev_session_id, transport_profile=transport_profile_of(source),
+            metadata={SESSION_MARKER: True} if is_limited_group(source) else {},
         )
         create_kwargs = self._session_create_kwargs(
             session_id=session_id, session_key=session_key, origin=source,
@@ -1183,6 +1190,7 @@ class SessionStore(
 
     def reset_session(self, session_key: str, display_name: Optional[str] = None) -> Optional[SessionEntry]:
         """Force reset a session, creating a new session ID."""
+        from gateway.group_limits import SESSION_MARKER, is_limited_group_chat
         with self._lock:
             old_entry = self._entry_locked(session_key)
             if old_entry is None:
@@ -1201,6 +1209,7 @@ class SessionStore(
                 session_key, old_entry, session_id, now,
                 display_name=display_name if display_name is not None else old_entry.display_name,
                 is_fresh_reset=True,
+                metadata={SESSION_MARKER: True} if is_limited_group_chat(old_entry.platform, old_entry.chat_type) else {},
             )
         try:
             self._finish_route_transition(
@@ -1405,10 +1414,13 @@ def build_session_context(
         thread_sessions_per_user=getattr(config, "thread_sessions_per_user", False),
     )
     actor = event if getattr(event, "user_id", None) is not None else source
+    # Druzhok: a home channel names the owner's chat; a group's prompt must not.
+    from gateway.group_limits import is_limited_group
     context = SessionContext(
         source=source, connected_platforms=connected, shared_multi_user_session=shared,
         actor_user_id=getattr(actor, "user_id", None), actor_user_name=getattr(actor, "user_name", None),
-        turn_event=event, home_channels={p: home for p in connected if (home := config.get_home_channel(p))},
+        turn_event=event, home_channels={} if is_limited_group(source) else {
+            p: home for p in connected if (home := config.get_home_channel(p))},
     )
     if session_entry:
         context.session_key = session_entry.session_key

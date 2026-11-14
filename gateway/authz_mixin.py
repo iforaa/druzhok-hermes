@@ -735,7 +735,9 @@ class GatewayAuthorizationMixin:
     def _is_user_authorized(self, source: SessionSource, *, allow_adapter_delegation: bool = True) -> bool:
         """Whether a user may use the bot.
 
-        Order: trusted-upstream delegation, chat-scoped group allowlists, ``{PLATFORM}_ALLOW_BOTS``,
+        A Telegram group is decided by ``DRUZHOK_GROUP_CHATS`` alone, ahead of all of this; the Telegram
+        group paths below stay only for upstream parity and cannot run. Otherwise, order:
+        trusted-upstream delegation, chat-scoped group allowlists, ``{PLATFORM}_ALLOW_BOTS``,
         per-platform allow-all, adapter role auth, pairing store, env/config allowlists,
         ``GATEWAY_ALLOW_ALL_USERS``, default deny. A bot-authored message that any of these admits
         is still refused while its chat's loop guard is cooling down.
@@ -754,6 +756,10 @@ class GatewayAuthorizationMixin:
         if local_verdict is not None:
             return local_verdict
 
+        # Druzhok: a Telegram group is admitted by this list and nothing else, owner included.
+        from gateway.group_limits import group_chat_approved, is_limited_group
+        if is_limited_group(source):
+            return group_chat_approved(source.chat_id)
         # Webhook events are HMAC-verified; a ``trusted_inbound`` platform's events come from the
         # service its adapter authenticated to (no human sender to allowlist).
         if source.platform == Platform.WEBHOOK or getattr(_registry_entry(source.platform), "trusted_inbound", False) is True:

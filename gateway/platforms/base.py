@@ -1,3 +1,4 @@
+# health: allow FILE_LINES -- druzhok fork: small group-limits hooks, kept in place so update-hermes can carry them
 """Base platform adapter interface; every platform adapter inherits from BasePlatformAdapter."""
 
 import asyncio
@@ -3916,6 +3917,11 @@ class BasePlatformAdapter(ABC):
         """Process an incoming message; returns quickly by spawning a background
         task so new messages (and interrupts) can arrive while an agent runs."""
         event._gateway_accepted = False
+        # Druzhok: before any busy-session path can queue it or dispatch it inline.
+        from gateway.group_limits import refuses_group_command
+        if refuses_group_command(event):
+            logger.info("[%s] Dropping a slash command from group chat %s", self.name, event.source.chat_id)
+            return
         if not self._message_handler:
             # No handler = every inbound silently discarded on an adapter that still polls and sends;
             # say so once per adapter (#102260).
@@ -4115,8 +4121,10 @@ class BasePlatformAdapter(ABC):
         """Auto-TTS on voice input (voice-first), gated by /voice or voice.auto_tts;
         skipped when streaming TTS already delivered audio this turn."""
         generation = getattr(interrupt_event, "_hermes_run_generation", None)
+        from gateway.group_limits import is_limited_group
         return bool(
-            self._should_auto_tts_for_chat(event.source.chat_id)
+            not is_limited_group(event.source)
+            and self._should_auto_tts_for_chat(event.source.chat_id)
             and event.message_type == MessageType.VOICE and text_content and not media_files
             and not self._streaming_tts_turn_completed(session_key, generation, event=event))
 
@@ -4398,6 +4406,8 @@ class BasePlatformAdapter(ABC):
                 logger.info("[%s] Suppressing %d bare local file path(s) already delivered in "
                             "this session: %s", self.name, len(suppressed), suppressed)
                 local_files = [p for p in local_files if p not in history]
+        from gateway.group_limits import drop_group_files
+        media_files, local_files = drop_group_files(event.source, media_files, local_files)
         if local_files:
             logger.info("[%s] extract_local_files found %d file(s) in response", self.name, len(local_files))
         # A2 (#29346): extraction can reduce a non-empty response to empty text with no attachment, and the

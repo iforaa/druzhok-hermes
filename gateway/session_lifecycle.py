@@ -147,6 +147,10 @@ class SessionLifecycleMixin:
 
     def _route_reset_reason(self, entry: SessionEntry) -> Optional[str]:
         """Only explicit suspension replaces a routed conversation; time never does."""
+        # Druzhok: so does a group session not created under the limits; it may hold owner data.
+        from gateway.group_limits import SESSION_MARKER, is_limited_group_chat
+        if is_limited_group_chat(entry.platform, entry.chat_type) and not entry.metadata.get(SESSION_MARKER):
+            return "group_limits"
         return "suspended" if entry.suspended else None
 
     def _update_entry(self, session_key: str, mutate) -> bool:

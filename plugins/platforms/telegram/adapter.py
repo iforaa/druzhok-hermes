@@ -757,6 +757,20 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         allowed_ids = {uid.strip() for uid in allowed_csv.split(",") if uid.strip()}
         return "*" in allowed_ids or user_id in allowed_ids
 
+    def toolsets_for_source(self, source) -> Optional[list[str]]:
+        """Druzhok: a group turn's toolsets; ``resolve_group_toolsets`` fails closed on a bad value."""
+        if source.chat_type in ("dm", "private"):
+            return None
+        return (getattr(self.config, "extra", None) or {}).get("group_toolsets")
+
+    def _group_file_refused(self, chat_id, path: str) -> Optional[SendResult]:
+        """Druzhok: the last gate for a local file, however a delivery path got here. Telegram DM ids
+        are positive integers, so anything else is a group or channel and gets no file."""
+        if str(chat_id).strip().isdigit():
+            return None
+        logger.warning("[%s] Refused to send a local file to group chat %s: %s", self.name, chat_id, os.path.basename(path))
+        return SendResult(success=False, error="Local files are not delivered to group chats")
+
     def _is_callback_user_authorized(
         self, user_id: str, *, chat_id: Optional[str] = None, chat_type: Optional[str] = None,
         thread_id: Optional[str] = None, user_name: Optional[str] = None) -> bool:
@@ -765,6 +779,9 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         if not normalized_user_id:
             return False
         normalized_chat_type = self._normalize_chat_type(chat_type, is_forum=thread_id is not None)
+        # Druzhok: every member of an approved group is authorized to talk; none may press a gated button.
+        if normalized_chat_type in {"group", "forum", "channel"}:
+            return False
         # Preferred: the auth callback GatewayRunner injects (set_authorization_check) → full
         # _is_user_authorized chain; also works for a multiplexed adapter whose _message_handler is a
         # profile closure. getattr tolerates partially-constructed adapters (object.__new__ in tests).
@@ -4897,6 +4914,8 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         self, chat_id: str, audio_path: str, caption: Optional[str] = None, reply_to: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None, **kwargs) -> SendResult:
         """Send audio as a native Telegram voice message or audio file."""
+        if refused := self._group_file_refused(chat_id, audio_path):
+            return refused
         if not self._bot:
             return SendResult(success=False, error="Not connected")
         _transcoded_voice_path: Optional[str] = None
@@ -4958,6 +4977,11 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         media group (need ``send_animation``) so they go via the base per-image path."""
         if not self._bot:
             return SendResult(success=False, error="Not connected")
+        if not str(chat_id).strip().isdigit():
+            kept = [img for img in images if not img[0].startswith("file://")]
+            if len(kept) != len(images):
+                logger.warning("[%s] Refused %d local image(s) to group chat %s", self.name, len(images) - len(kept), chat_id)
+            images = kept
         if not images:
             return SendResult(success=False, error="no images to send")
         try:
@@ -4981,6 +5005,8 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         self, chat_id: str, image_path: str, caption: Optional[str] = None, reply_to: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None, **kwargs) -> SendResult:
         """Send a local image file natively as a Telegram photo."""
+        if refused := self._group_file_refused(chat_id, image_path):
+            return refused
         # Pre-compress large raster images to progressive JPEG once; the photo send and the document
         # fallback both reuse the compressed file so either upload stays under media_write_timeout.
         compressed = self._compress_image_to_jpeg(image_path)
@@ -5025,6 +5051,8 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         self, chat_id: str, file_path: str, caption: Optional[str] = None, file_name: Optional[str] = None,
         reply_to: Optional[str] = None, metadata: Optional[dict[str, Any]] = None, **kwargs) -> SendResult:
         """Send a document/file natively as a Telegram file attachment."""
+        if refused := self._group_file_refused(chat_id, file_path):
+            return refused
         return await self._send_local_file(
             "File", file_path, chat_id, reply_to, metadata, "document",
             lambda f: {"document": f, "filename": file_name or os.path.basename(file_path), "caption": self._caption_1024(caption)},
@@ -5043,6 +5071,8 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         ``320x320`` video with ``duration=0`` and no thumbnail, which clients then draw as a square
         tile whatever the true aspect ratio (portrait reels and 16:9 clips alike).
         """
+        if refused := self._group_file_refused(chat_id, video_path):
+            return refused
         geometry = await asyncio.to_thread(_probe_video_geometry, video_path)
         thumb_path = (
             await asyncio.to_thread(_video_thumbnail_jpeg, video_path, geometry.get("duration"))

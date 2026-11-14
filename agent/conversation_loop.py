@@ -808,7 +808,8 @@ def _restore_or_build_system_prompt(agent, system_message, conversation_history)
     stored_prompt = None
     stored_state = "missing"
     session_row = None
-    if conversation_history and agent._session_db:
+    # Druzhok: a group agent always builds its own prompt and tools[]; stored ones may predate the limits.
+    if conversation_history and agent._session_db and getattr(agent, "group_limited", False) is not True:
         try:
             session_row = agent._session_db.get_session(agent.session_id)
             if session_row is not None:

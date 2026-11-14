@@ -64,6 +64,7 @@ def _incident_config(monkeypatch):
     monkeypatch.setenv("TELEGRAM_ALLOW_BOTS", "mentions")
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", HUMAN)
     monkeypatch.setenv("TELEGRAM_GROUP_ALLOWED_CHATS", f"{GROUP_CHAT},{OTHER_GROUP}")
+    monkeypatch.setenv("DRUZHOK_GROUP_CHATS", f"{GROUP_CHAT},{OTHER_GROUP}")
 
 
 def _inbound(runner, source: SessionSource) -> bool:

@@ -740,3 +740,21 @@ def hosted_owner(tmp_path, monkeypatch):
     thread.join()
     loop.close()
     store._db.close()
+# Druzhok: upstream tests of Telegram group behaviour this fork removes on purpose. A group is admitted
+# by DRUZHOK_GROUP_CHATS alone and no group member presses a gated button (tests/gateway/test_group_limits.py).
+_REMOVED_BY_GROUP_LIMITS = (
+    "test_multiplex_interactive_auth.py::test_routed_primary_callback_uses_routed_pairing_store_and_transport_allowlist",
+    "test_multiplex_interactive_auth.py::test_bot_sender_reaches_allow_bots_policy_through_callback",
+    "test_telegram_callback_auth_fail_closed.py::TestCallbackAuthPrefersInjectedCheck::test_injected_check_used_when_handler_is_a_closure",
+    "test_telegram_group_gating.py::test_shared_group_observe_source_is_authorized_by_group_allowed_chats",
+    "test_telegram_model_picker.py::test_group_model_picker_switch_follows_callback_allowlist[111-True]",
+    "test_telegram_topic_mode.py::test_group_new_keeps_existing_reset_semantics_when_dm_topic_mode_enabled",
+    "test_unauthorized_dm_behavior.py::test_telegram_group_users_legacy_chat_ids_still_authorize",
+    "test_unauthorized_dm_behavior.py::test_telegram_group_users_mixed_sender_and_legacy_chat",
+)
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if item.nodeid.endswith(_REMOVED_BY_GROUP_LIMITS):
+            item.add_marker(pytest.mark.skip(reason="druzhok: removed by the group limits"))

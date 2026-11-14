@@ -685,11 +685,16 @@ class GatewayTurnHygieneMixin:
         _hyg_checkpoint_required = _is_truthy(
             ((_load_cfg() or {}).get("compression") or {}).get("checkpoint_required"), default=False,
         )
+        # Druzhok: a group transcript never reaches the owner's memory provider through a checkpoint.
+        from gateway.group_limits import is_limited_group
+        _hyg_group = is_limited_group(session_entry.origin)
         _hyg_agent = AIAgent(
             **_hyg_runtime, model=_hyg_model, max_iterations=4, quiet_mode=True,
-            skip_memory=not _hyg_checkpoint_required, enabled_toolsets=["memory"],
+            skip_memory=not _hyg_checkpoint_required or _hyg_group, enabled_toolsets=["memory"],
             session_id=session_entry.session_id, session_db=_hyg_session_db,
         )
+        if _hyg_group:
+            _hyg_agent.compression_checkpoint_required = False
         _seed_hygiene_system_prompt(_hyg_agent, _hyg_session_row)
         # The stamp only marks this agent as no real surface. Since #104414 Platform is not a
         # restore-identity field, so it no longer forces the next live turn to rebuild; the seed's

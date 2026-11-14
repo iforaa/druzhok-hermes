@@ -3251,8 +3251,8 @@ def _reconnect_needs_attention(info: dict, now: float) -> bool:
 _SESSION_DB_UNPINNED = object()
 
 
-# Only explicit suspension can replace a routed conversation.
 _AUTO_RESET_CONTEXT_NOTES = {
+    "group_limits": "[System note: This group chat starts a fresh conversation with no prior context.]",
     "suspended": "[System note: The user's previous session was stopped and suspended. This is a fresh conversation with no prior context.]",
 }
 

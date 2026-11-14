@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from agent.interrupt_compat import _accepts_keyword
 from agent.replay_cleanup import strip_stale_dangerous_confirmations
 from gateway.config import Platform
+from gateway.group_limits import is_limited_group, refuse_unlimited_runtime
 from gateway.media_repair import repair_explicit_computer_use_media_paths
 from gateway.platforms.base import BasePlatformAdapter
 from gateway.session_api_turn import api_runtime_locked
@@ -158,13 +159,15 @@ class GatewaySessionAgentMixin:
         from gateway.session_policy import policy_for_source
         from gateway.session_worker_construct import session_prefill
         policy = policy_for_source(runner, src)
-        return ctx.AIAgent(
+        limited = is_limited_group(src)
+        agent = ctx.AIAgent(
             model=turn_route["model"], **turn_route["runtime"], **_checkpoint_agent_kwargs(ctx.user_config),
             max_iterations=max_iterations, quiet_mode=not bool(policy and policy.verbose), verbose_logging=False,
             enabled_toolsets=ctx.enabled_toolsets, disabled_toolsets=ctx.disabled_toolsets,
             ephemeral_system_prompt=combined_ephemeral or None,
-            prefill_messages=(session_prefill(active_authority(runner), policy, src.chat_id) if policy
-                              else runner._prefill_messages) or None,
+            prefill_messages=None if limited else (
+                session_prefill(active_authority(runner), policy, src.chat_id) if policy
+                else runner._prefill_messages) or None,
             reasoning_config=reasoning_config, service_tier=runner._service_tier,
             request_overrides=turn_route.get("request_overrides"),
             providers_allowed=pr.get("only"), providers_ignored=pr.get("ignore"), providers_order=pr.get("order"),
@@ -177,29 +180,37 @@ class GatewaySessionAgentMixin:
             session_db=getattr(runner._session_db, "_db", runner._session_db),
             # Reload from disk — do not reuse the startup snapshot.
             # See #60955.
-            fallback_model=None if api_runtime_locked() else self._runner._refresh_fallback_model(),
+            # Druzhok: a group turn cannot fail over onto a runtime the limits do not reach.
+            fallback_model=None if api_runtime_locked() or limited else self._runner._refresh_fallback_model(),
             skip_context_files=skip_context_files,
             # Keep the persona even with minimal context: soul identity is one small file.
             load_soul_identity=not bool(policy and policy.ignore_rules),
-            skip_memory=bool(policy and policy.ignore_rules),
+            skip_memory=limited or bool(policy and policy.ignore_rules),
+            skip_background_review=limited,
             pass_session_id=bool(policy and policy.pass_session_id),
             # A local session's frozen budget (`--run-budget` / its profile's agent.run_budget_seconds);
             # None leaves the agent reading the owner's config, as before.
             run_budget_seconds=policy.run_budget_seconds if policy else None,
         )
+        if limited:
+            agent.group_limited = True
+            agent.compression_checkpoint_required = False  # it guards the owner's memory, which a group has none of
+        return agent
 
     def _resolve_turn_agent(self, turn_route, platform_key, combined_ephemeral, max_iterations, reasoning_config, pr):
         """Reuse this session's cached AIAgent (frozen system prompt + tool schemas → prompt cache
         hits) or build a fresh one. Returns (agent, reused_cached_agent)."""
         ctx = self._ctx
         runner = self._runner
-        skip_context_files = self._skip_context_files(platform_key)
+        limited = is_limited_group(ctx.source)
+        refuse_unlimited_runtime(ctx.source, turn_route["runtime"])
+        skip_context_files = limited or self._skip_context_files(platform_key)
         sig = runner._agent_config_signature(
             turn_route["model"], turn_route["runtime"], ctx.enabled_toolsets, combined_ephemeral,
             cache_keys=runner._extract_cache_busting_config(ctx.user_config),
             user_id=getattr(ctx.source, "user_id", None),
             user_id_alt=getattr(ctx.source, "user_id_alt", None),
-            skip_context_files=skip_context_files,
+            skip_context_files=skip_context_files, skip_memory=limited,
         )
         cache_lock = getattr(runner, "_agent_cache_lock", None)
         cache = getattr(runner, "_agent_cache", None)
@@ -216,7 +227,7 @@ class GatewaySessionAgentMixin:
             found.evicted, found.reused, agent = agent, False, None
             with cache_lock:
                 cache.pop(ctx.session_key, None)
-        if found.reused and agent is not None:
+        if found.reused and agent is not None and not limited:
             self._runner._apply_fallback_chain_to_agent(agent, None if locked else runner._refresh_fallback_model())
         if found.evicted is not None:
             self._release_evicted_agent(found.evicted)

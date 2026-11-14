@@ -1,3 +1,4 @@
+# health: allow FILE_LINES -- druzhok fork: small group-limits hooks, kept in place so update-hermes can carry them
 """Inbound message pipeline (_handle_message, text/media preparation, durable-turn markers, plugin injection) for GatewayRunner.
 
 Split out of ``gateway/run.py``; bound onto ``GatewayRunner`` via the MRO.
@@ -151,6 +152,7 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
     ) -> Optional[tuple[MessageEvent, SessionSource, bool]]:
         """Ingress gates for ``_handle_message``; None when dropped, else ``(event, source, is_internal)``
         (the ``pre_gateway_dispatch`` hook may have rewritten ``event``)."""
+        from gateway.group_limits import refuses_group_command
         from gateway.run import _is_slack_ignored_channel
         source = event.source
         # getattr(self, ...) throughout: bare test runners build GatewayRunner via object.__new__.
@@ -243,6 +245,10 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
                 await self._hm_report_ignored_dm(source)
             else:
                 logger.warning("Unauthorized user: %s (%s) on %s", source.user_id, source.user_name, source.platform.value)
+            return None
+        _group_command = refuses_group_command(event)
+        if _group_command:
+            logger.info("Dropping /%s from group chat %s", _group_command, source.chat_id)
             return None
         # The busy path charged this event on arrival; a drained follow-up must not pay twice.
         if not getattr(event, "_bot_loop_admitted", False) and not (
@@ -1760,6 +1766,7 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
         follow-up paths so attribution, image enrichment, STT, document notes, reply context and
         @ references behave the same. Side effect: buffers per-session native image paths when the
         model supports native vision; the caller consumes that buffer at ``run_conversation``."""
+        from gateway.group_limits import MEDIA_NOTE, is_limited_group
         rehome_inbound_media(event)  # before any consumer (vision, STT, document notes) reads media_urls
         _pending_stt_prepared = hasattr(event, "_gateway_pending_stt_text")
         message_text = (event._gateway_pending_stt_text if _pending_stt_prepared else event.text) or ""
@@ -1771,17 +1778,23 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
 
         message_text = self._prefix_inbound_sender_context(event, source, message_text)
         image_paths, audio_paths, audio_file_paths, video_paths = self._classify_inbound_media(event, _pending_stt_prepared)
-        if image_paths:
+        limited_group = is_limited_group(source)
+        if image_paths and not limited_group:
             message_text = await self._enrich_inbound_images(source, session_key, message_text, image_paths)
         if audio_paths:
             message_text = await self._enrich_inbound_voice(event, source, message_text, audio_paths)
-        message_text = self._prepend_inbound_media_file_notes(
-            message_text, audio_file_paths, video_paths, self._inbound_original_names(event))
-        message_text = self._prepend_inbound_document_notes(event, message_text)
-        from gateway.session_context_refs import turn_references
-        message_text = await turn_references(self, event, source, session_key, message_text)
-        if message_text is None:
-            return None
+        if limited_group:
+            # No image analysis, no local paths and no tool hints: the turn has no tool that opens a file.
+            if set(event.media_urls or []) - set(audio_paths):
+                message_text = f"{MEDIA_NOTE}\n\n{message_text}"
+        else:
+            message_text = self._prepend_inbound_media_file_notes(
+                message_text, audio_file_paths, video_paths, self._inbound_original_names(event))
+            message_text = self._prepend_inbound_document_notes(event, message_text)
+            from gateway.session_context_refs import turn_references
+            message_text = await turn_references(self, event, source, session_key, message_text)
+            if message_text is None:
+                return None
         # After expansion: the quoted reply is someone else's text and stays literal — an
         # ``@file:`` inside it must never read a local file on the replier's behalf.
         return self._prepend_inbound_reply_context(event, source, message_text)

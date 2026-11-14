@@ -489,6 +489,11 @@ class GatewayStartupMixin:
                 # Adopted at boot inside its flood wait: its resume flag is cleared with the others, and
                 # the timer armed below sends it once the platform's deadline has passed.
                 continue
+            from gateway.group_limits import replay_refused
+            if replay_refused(row.get("platform"), row.get("chat_id")):
+                logger.warning("Dropped stored reply %s to unapproved group chat %s", row["obligation_id"], row["chat_id"])
+                await asyncio.to_thread(mark_delivered, row["obligation_id"])
+                continue
             adapter = await self._obligation_adapter(row)
             if adapter is None:
                 continue

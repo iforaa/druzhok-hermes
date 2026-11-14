@@ -37,6 +37,7 @@ class GatewayBackgroundMixin:
         media_types: Optional[list[str]] = None,
     ) -> None:
         """Execute a background agent task and deliver the result to the chat."""
+        from gateway.group_limits import group_agent_kwargs, is_limited_group, refuse_unlimited_runtime
         from gateway.run import (
             _checkpoint_agent_kwargs, _current_max_iterations, _load_gateway_config,
             _platform_config_key,
@@ -68,7 +69,7 @@ class GatewayBackgroundMixin:
 
             # Enrich the prompt with image descriptions (same as the main flow).
             enriched_prompt = prompt
-            image_paths = [
+            image_paths = [] if is_limited_group(source) else [
                 path for i, path in enumerate(media_urls)
                 if (media_types[i] if i < len(media_types) else "").startswith("image/")
             ]
@@ -77,6 +78,8 @@ class GatewayBackgroundMixin:
                     enriched_prompt = await self._enrich_message_with_vision(prompt, image_paths)
                 except Exception as e:
                     logger.warning("Background task vision enrichment failed: %s", e, exc_info=True)
+
+            refuse_unlimited_runtime(source, turn_route["runtime"])
 
             def run_sync():
                 from gateway.session_context import declare_stateless_channel
@@ -108,7 +111,8 @@ class GatewayBackgroundMixin:
                     session_db=getattr(self._session_db, "_db", self._session_db),
                     # Reload from disk — do not reuse the startup snapshot.
                     # See #60955.
-                    fallback_model=self._refresh_fallback_model(),
+                    fallback_model=None if is_limited_group(source) else self._refresh_fallback_model(),
+                    **group_agent_kwargs(source),
                 )
                 # Built outside the turn wiring, so it takes its chat's Daybreak verdicts here.
                 agent.daybreak_surface = self._daybreak_surface(source) is True
