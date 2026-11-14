@@ -658,3 +658,15 @@ def test_telegram_config_extra_reaches_the_adapter():
     extra = {"group_toolsets": ["web"]}
     assert _adapter(extra).toolsets_for_source(_group()) == ["web"]
     assert _adapter(extra).toolsets_for_source(_dm()) is None
+
+
+# ── a turn lost in a restart never pauses a group (it cannot send /discard or /new) ─────────────
+
+
+@pytest.mark.parametrize("source,unattended", [(_group(), True), (_dm(), False)])
+def test_a_lost_group_turn_settles_instead_of_pausing_the_chat(source, unattended):
+    from gateway.session_unattended_unknown import is_unattended
+
+    encoded = {**source.to_dict(), "is_bot": False}  # what session_envelope stores in the admission row
+    row = {"principal_id": "human", "payload": {"text": "hi", "native_text_v1": {"source": encoded}}}
+    assert is_unattended(row) is unattended

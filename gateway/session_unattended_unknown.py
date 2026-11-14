@@ -30,8 +30,14 @@ def is_unattended(row) -> bool:
     # A webhook delivery: the provider already got its 202 and nobody can be asked to resend it.
     # A Kanban card attempt (#134889 KB-8): the dispatcher's marker, committed only by
     # ``SessionAuthority.submit(_kanban_card=...)``; a card row main minted without it still pauses.
-    return ('local_automation_v1' in payload or 'kanban_card_v1' in payload
-            or 'automation' in native or 'webhook_delivery' in native)
+    if ('local_automation_v1' in payload or 'kanban_card_v1' in payload
+            or 'automation' in native or 'webhook_delivery' in native):
+        return True
+    # Druzhok: a limited Telegram group cannot send /discard or /new (group_limits drops every slash
+    # command), so a paused group FIFO would never resume. Its lost turn settles like an automation's.
+    from gateway.group_limits import is_limited_group_chat
+    source = native.get('source') or {}
+    return is_limited_group_chat(source.get('platform'), source.get('chat_type'))
 
 
 def _unattended_unknown(rows):

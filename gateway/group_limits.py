@@ -27,8 +27,9 @@ MEDIA_NOTE = "[The user attached media. Only its text, if it is shown here, is a
 
 
 def is_limited_group_chat(platform: Any, chat_type: Any) -> bool:
-    """Anything on Telegram that is not a DM. An empty chat type counts as a group: fail closed."""
-    return platform == Platform.TELEGRAM and str(chat_type or "").strip().lower() not in _DM_CHAT_TYPES
+    """Anything on Telegram that is not a DM. An empty chat type counts as a group: fail closed.
+    ``platform`` is a ``Platform`` or its stored value (an admission row's encoded source)."""
+    return platform in (Platform.TELEGRAM, Platform.TELEGRAM.value) and str(chat_type or "").strip().lower() not in _DM_CHAT_TYPES
 
 
 def is_limited_group(source: Any) -> bool:
