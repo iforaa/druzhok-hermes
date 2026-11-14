@@ -49,9 +49,12 @@ def build_pdf(spec: dict, out_path: str) -> int:
     except ImportError:
         print("Missing dependency: install with 'python3 -m pip install reportlab'", file=sys.stderr)
         return 2
+    import _fonts
 
+    fonts = _fonts.fonts()
     page_size = letter if str(spec.get("page_size", "A4")).lower() == "letter" else A4
     styles = getSampleStyleSheet()
+    _fonts.use_in_styles(styles)
     story = []
     for el in spec.get("elements", []):
         etype = el.get("type")
@@ -67,13 +70,14 @@ def build_pdf(spec: dict, out_path: str) -> int:
                 continue
             table = Table(rows, repeatRows=1 if el.get("header", True) else 0)
             style = [
+                ("FONTNAME", (0, 0), (-1, -1), fonts["regular"]),
                 ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ]
             if el.get("header", True):
                 style += [
                     ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTNAME", (0, 0), (-1, 0), fonts["bold"]),
                 ]
             table.setStyle(TableStyle(style))
             story.append(table)
@@ -100,7 +104,7 @@ def build_pdf(spec: dict, out_path: str) -> int:
     def draw_page_number(canvas, doc):
         if spec.get("page_numbers", True):
             canvas.saveState()
-            canvas.setFont("Helvetica", 9)
+            canvas.setFont(fonts["regular"], 9)
             canvas.drawCentredString(page_size[0] / 2.0, 0.5 * inch, f"Page {doc.page}")
             canvas.restoreState()
 
