@@ -206,7 +206,8 @@ dropped silently. The mechanics, in the order the due scan applies them
    `last_dispatch.kind = late`.
 5. **Past grace → collapse the backlog, fire once** (`kind = catch_up`), or skip
    with a logged reason when the operator set `cron.catch_up_missed: false`
-   (planned downtime). One-shots past their 120 s grace are retired with a
+   (planned downtime). One-shots past their late-run window (120 s, or
+   `HERMES_CRON_ONESHOT_LATE_S` when set higher) are retired with a
    diagnostic, never resurrected.
 6. **Paused / disabled / terminal jobs never fire**; the due scan drops them
    before any of the above, and pause/resume clears any pending slot. A

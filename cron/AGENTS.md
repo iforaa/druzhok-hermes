@@ -24,8 +24,9 @@ Hardening invariants — each guards a real failure; don't weaken without answer
   is never cut off. Attached scripts (pre-run or `no_agent`) are bounded separately by the script
   timeout (`_DEFAULT_SCRIPT_TIMEOUT`, 3600s).
 - Catch-up window = half the period, clamped to 120s–2h, or the job's `grace_minutes` when set
-  (`0` = never catch up — a real value, never "unset": `0 == False`); 120s grace for missed
-  one-shots.
+  (`0` = never catch up — a real value, never "unset": `0 == False`); 120s grace for one-shots at
+  create/update/resume. Run-time retire window = `oneshot_late_run_seconds()`
+  (`HERMES_CRON_ONESHOT_LATE_S`, druzhok patch, min 120s) — intentional, not a regression.
 - **A pinned `timezone` owns the whole path, not just the compute.** `compute_next_run` resolves
   *job pin → profile zone*, and every `next_run_at` write site must pass the pin (`cron/jobs.py`
   call sites, `quota_hold.plan_hold`, `unreachable_retry.will_retry`, `extra_fire.settle`); one missed site is a burst

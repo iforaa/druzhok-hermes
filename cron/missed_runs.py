@@ -116,27 +116,28 @@ def fast_forward_missed_recurring(d: Any, grace: int) -> bool:
 
 
 def retire_expired_oneshot(d: Any) -> bool:
-    """One-shot grace gate; True when the job must not fire this tick.
+    """One-shot late-run gate (``oneshot_late_run_seconds``); True when the job must not fire this tick.
 
-    A one-shot beyond the grace window fires once late only when the job opted in
+    A one-shot beyond that window fires once late only when the job opted in
     (``catch_up: true``); otherwise it never fires (create/update/resume reject such schedules and
     recovery never revives them). With no claim stamped, retire it with a diagnostic and a
     ``missed ×1`` ledger row (never silently delete). A claim may mean a run is still in flight
     elsewhere — skip but keep the record so its mark_job_run can land."""
     from cron import store_health
-    from cron.jobs import (
-        ONESHOT_GRACE_SECONDS, _current_cron_store, _elapsed_seconds, record_cron_missed)
+    from cron.env_settings import oneshot_late_run_seconds
+    from cron.jobs import _current_cron_store, _elapsed_seconds, record_cron_missed
     from cron.dispatch_hold import grace_starts_at
     from cron.jobs_oneshot_diagnostics import write_missed
 
-    if _elapsed_seconds(d.scan.now, d.next_run_dt) <= ONESHOT_GRACE_SECONDS:
+    late_window = oneshot_late_run_seconds()
+    if _elapsed_seconds(d.scan.now, d.next_run_dt) <= late_window:
         return False
     # Due while a gateway drain held dispatch: its grace counts from the end of the hold. A claimed
     # one-shot already fired once, so it never gets the extension (that would re-dispatch it).
     claimed = d.job.get("run_claim") or d.job.get("fire_claim")
     grace_start = d.next_run_dt.timestamp() if claimed else grace_starts_at(
-        _current_cron_store().cron_dir, d.next_run_dt.timestamp(), ONESHOT_GRACE_SECONDS)
-    if d.scan.now.timestamp() - grace_start <= ONESHOT_GRACE_SECONDS:
+        _current_cron_store().cron_dir, d.next_run_dt.timestamp(), late_window)
+    if d.scan.now.timestamp() - grace_start <= late_window:
         return False
     if job_catches_up(d.job):
         logger.info("Job '%s' missed its one-shot time %s; firing it once now (catch_up on).",
@@ -144,7 +145,7 @@ def retire_expired_oneshot(d: Any) -> bool:
         return False
     # Due during an outage of its store: it was skipped, not missed; fire it once on recovery.
     if store_health.outage_covers(
-            _current_cron_store().cron_dir, d.next_run_dt.timestamp(), ONESHOT_GRACE_SECONDS):
+            _current_cron_store().cron_dir, d.next_run_dt.timestamp(), late_window):
         return False
     claim = d.job.get("run_claim")
     # An outage-covered claim that never reached its fire claim never started: it stays covered.

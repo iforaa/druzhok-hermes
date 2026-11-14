@@ -58,7 +58,8 @@ def write_wedged(job: dict[str, Any]) -> None:
 def write_missed(job: dict[str, Any], next_run: str) -> None:
     """Trace for a never-ran one-shot retired outside the grace window (else it would just vanish).
     """
-    from cron.jobs import ONESHOT_GRACE_SECONDS, _hermes_now
+    from cron.env_settings import oneshot_late_run_seconds
+    from cron.jobs import _hermes_now
 
     _write(
         job,
@@ -66,7 +67,7 @@ def write_missed(job: dict[str, Any], next_run: str) -> None:
         f"- job id: {job.get('id')}\n"
         f"- name: {job.get('name')}\n"
         f"- scheduled run time: {next_run}\n"
-        f"- grace window: {ONESHOT_GRACE_SECONDS}s\n"
+        f"- grace window: {oneshot_late_run_seconds()}s\n"
         f"- removed at: {_hermes_now().isoformat()}\n\n"
         "This one-shot's run time is more than the grace window in the "
         "past (scheduler down past the window, host asleep, or jobs.json "

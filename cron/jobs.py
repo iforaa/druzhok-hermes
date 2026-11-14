@@ -33,7 +33,7 @@ from pathlib import Path
 from agent.deadline import poll_until
 from hermes_constants import get_hermes_home
 from cron.constants import CLAIM_TTL_INACTIVITY_HEADROOM, FIRE_CLAIM_SKEW_SECONDS, FIRE_CLAIM_TTL_SECONDS
-from cron.env_settings import cron_env_setting
+from cron.env_settings import cron_env_setting, oneshot_late_run_seconds
 from cron.jobs_invariants import _validate_job_mode_invariants, validate_schedule_knobs
 from cron.jobs_model_pin import _main_model_pin
 from cron import jobs_time
@@ -3238,7 +3238,7 @@ def _evaluate_due_job(job: dict[str, Any], scan: _DueScan, run_claim_ttl: float)
         # fixed window is not enough for a run that outlives a tick. The other process sees the
         # fresh claim and skips; mark_job_run() clears it. The TTL only covers a tick that DIES.
         claim = {"at": now.isoformat(), "by": _machine_id()}
-        if _elapsed_seconds(now, d.next_run_dt) > ONESHOT_GRACE_SECONDS:  # only an outage lets it through
+        if _elapsed_seconds(now, d.next_run_dt) > oneshot_late_run_seconds():  # only an outage lets it through
             claim["outage"] = True
         job["run_claim"] = claim
         scan.persist(job["id"], run_claim=claim)

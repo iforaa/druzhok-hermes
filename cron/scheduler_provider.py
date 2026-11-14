@@ -317,10 +317,8 @@ def fire_overdue_jobs(
     if grace_minutes <= 0:
         return 0
 
-    from cron.jobs import (
-        ONESHOT_GRACE_SECONDS, _elapsed_seconds, _ensure_aware, _hermes_now,
-        is_job_runnable, load_jobs,
-    )
+    from cron.env_settings import oneshot_late_run_seconds
+    from cron.jobs import _elapsed_seconds, _ensure_aware, _hermes_now, is_job_runnable, load_jobs
 
     if now is None:
         now = _hermes_now()
@@ -340,21 +338,20 @@ def fire_overdue_jobs(
         if overdue_seconds < grace_minutes * 60:
             continue
         job_id = str(job.get("id") or "")
-        # One-shots past ONESHOT_GRACE_SECONDS "will never fire"; don't resurrect them hours late.
-        # One-shot jobs share the module-wide policy: more than ONESHOT_GRACE_SECONDS past their run time
-        # means "will never fire" (create/update/resume/recovery and, since #89571, the due-scan all enforce
-        # it). The misfire backstop must not resurrect them hours late after downtime — that's #93526.
+        # One-shots share the due scan's late-run window (oneshot_late_run_seconds, 120 s unless
+        # HERMES_CRON_ONESHOT_LATE_S widens it): past it a one-shot "will never fire", so the misfire
+        # backstop must not resurrect it after downtime (#93526).
         schedule = job.get("schedule") or {}
-        if str(schedule.get("kind") or "") == "once" and overdue_seconds > ONESHOT_GRACE_SECONDS:
+        if str(schedule.get("kind") or "") == "once" and overdue_seconds > (late_window := oneshot_late_run_seconds()):
             logger.warning(
                 "Misfire catch-up: one-shot job %s (%s) was due %s "
-                "(%.0f min overdue) — outside the %ss one-shot grace "
-                "window, not firing.",
+                "(%.0f min overdue) — outside the %ss one-shot "
+                "late-run window, not firing.",
                 job_id,
                 job.get("name") or "unnamed",
                 next_run_at,
                 overdue_seconds / 60,
-                ONESHOT_GRACE_SECONDS,
+                late_window,
             )
             continue
         logger.warning(
