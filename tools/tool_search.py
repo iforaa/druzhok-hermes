@@ -137,9 +137,10 @@ def _core_tool_names() -> frozenset[str]:
 
 # Session-gated GUI toolsets: off ``_HERMES_CORE_TOOLS`` so non-GUI clients never pay
 # their schema; once enabled they stay direct unless the deferral list names them.
-# Druzhok: toolsets a bot's prompt names as tools to call, so they never defer. Their check_fn already
-# spares every bot without the service the schema. They are no GUI surface: out_of_scope_reason skips them.
-_DRUZHOK_DIRECT_TOOLSETS = frozenset({"sites"})
+# Druzhok: toolsets a bot's prompt names as tools to call, so they never defer. ``sites``'s check_fn
+# spares every bot without hosting the schema; ``mcp-cleohub`` is the CleoHub MCP server druzhok writes
+# into every bot's config (other MCP servers still defer). No GUI surface: out_of_scope_reason skips them.
+_DRUZHOK_DIRECT_TOOLSETS = frozenset({"sites", "mcp-cleohub"})
 _DIRECT_SURFACE_TOOLSETS = CLIENT_SURFACE_TOOLSETS | TOOLSET_SESSION_PLATFORMS.keys() | _DRUZHOK_DIRECT_TOOLSETS
 
 # Event-triggered tools deferred BY DEFAULT (a catalog stub suffices). Keep the curated
