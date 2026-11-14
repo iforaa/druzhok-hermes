@@ -56,6 +56,9 @@ def build_form(spec: dict, out_path: str) -> int:
     except ImportError:
         print("Missing dependency: install with 'python3 -m pip install reportlab'", file=sys.stderr)
         return 2
+    import _fonts
+
+    font = _fonts.fonts()["regular"]
 
     width, height = _page_size(spec)
     page_count = int(spec.get("page_count", 1))
@@ -82,7 +85,7 @@ def build_form(spec: dict, out_path: str) -> int:
             if f.get("label"):
                 lx, ly = (float(f["label_box"][0]), float(f["label_box"][1])) \
                     if f.get("label_box") else (ex0 - 90, ey0 + 4)
-                c.setFont("Helvetica", float(f.get("label_size", 10)))
+                c.setFont(font, float(f.get("label_size", 10)))
                 c.setFillColor(colors.black)
                 c.drawString(lx, ly + 2, str(f["label"]))
             tooltip = f.get("tooltip", "")
@@ -104,7 +107,7 @@ def build_form(spec: dict, out_path: str) -> int:
                 size = min(eh, ew / max(len(options), 1) * 0.5, 16)
                 slot = ew / len(options)
                 sel = f.get("value")
-                c.setFont("Helvetica", 8)
+                c.setFont(font, 8)
                 for i, opt in enumerate(options):
                     ox = ex0 + i * slot
                     form.radio(name=name, value=str(opt), x=ox, y=ey0, size=size,
