@@ -137,7 +137,10 @@ def _core_tool_names() -> frozenset[str]:
 
 # Session-gated GUI toolsets: off ``_HERMES_CORE_TOOLS`` so non-GUI clients never pay
 # their schema; once enabled they stay direct unless the deferral list names them.
-_DIRECT_SURFACE_TOOLSETS = CLIENT_SURFACE_TOOLSETS | TOOLSET_SESSION_PLATFORMS.keys()
+# Druzhok: toolsets a bot's prompt names as tools to call, so they never defer. Their check_fn already
+# spares every bot without the service the schema. They are no GUI surface: out_of_scope_reason skips them.
+_DRUZHOK_DIRECT_TOOLSETS = frozenset({"sites"})
+_DIRECT_SURFACE_TOOLSETS = CLIENT_SURFACE_TOOLSETS | TOOLSET_SESSION_PLATFORMS.keys() | _DRUZHOK_DIRECT_TOOLSETS
 
 # Event-triggered tools deferred BY DEFAULT (a catalog stub suffices). Keep the curated
 # list in DEFAULT_CONFIG so config discovery and runtime behavior cannot drift. An explicit
@@ -159,7 +162,8 @@ def is_deferrable_tool_name(name: str, defer_tools: Optional[frozenset] = None) 
         return False
     toolset = _registry_toolset(name)  # None (unregistered/malformed) never defers
     return toolset is not None and (
-        toolset.startswith("mcp-") or toolset not in _DIRECT_SURFACE_TOOLSETS)
+        (toolset.startswith("mcp-") and toolset not in _DRUZHOK_DIRECT_TOOLSETS)
+        or toolset not in _DIRECT_SURFACE_TOOLSETS)
 
 
 def _tool_def_names(tool_defs: Iterable[dict[str, Any]]) -> Iterable[str]:
@@ -558,7 +562,8 @@ def out_of_scope_reason(name: str) -> Optional[str]:
     session's catalog at all. Name the missing surface instead. None for anything else
     (the generic message still applies). Fail-open: never raises."""
     try:
-        if _registry_toolset(name) in _DIRECT_SURFACE_TOOLSETS:
+        toolset = _registry_toolset(name)
+        if toolset in _DIRECT_SURFACE_TOOLSETS and toolset not in _DRUZHOK_DIRECT_TOOLSETS:
             return (f"'{name}' needs a desktop-app session with a GUI surface (preview/terminal panes). "
                     "This session has none: use it only from the Hermes desktop app, not via tool_search.")
     except Exception:
