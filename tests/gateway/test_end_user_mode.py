@@ -93,7 +93,7 @@ def test_background_notice_drops_command_and_tail(monkeypatch, on):
 async def test_auto_reset_notice_hides_session_info(monkeypatch, on):
     from types import SimpleNamespace
 
-    import gateway.run_turn_prepare as run_turn_prepare
+    from gateway import run_turn_prepare
 
     _set_mode(monkeypatch, on)
     monkeypatch.setattr(run_turn_prepare, "build_channel_continuity_note", lambda *_a: None)

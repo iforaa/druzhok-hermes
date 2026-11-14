@@ -1,3 +1,4 @@
+# health: allow FILE_LINES -- druzhok fork: small end_user_mode / group-limits hooks, kept in place so update-hermes can carry them
 """Startup sequence, resume/restore and handoff methods for GatewayRunner.
 
 Split out of ``gateway/run.py``; bound onto ``GatewayRunner`` via the MRO.

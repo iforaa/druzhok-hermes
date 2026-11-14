@@ -1,3 +1,4 @@
+# health: allow FILE_LINES -- druzhok fork: small end_user_mode / group-limits hooks, kept in place so update-hermes can carry them
 """Default configuration data for Hermes Agent: DEFAULT_CONFIG and OPTIONAL_ENV_VARS.
 
 Pure-data leaf module — must not import from hermes_cli.config. Comments are the user-facing

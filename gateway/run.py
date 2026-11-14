@@ -1,3 +1,4 @@
+# health: allow FILE_LINES -- druzhok fork: small end_user_mode / group-limits hooks, kept in place so update-hermes can carry them
 """Gateway runner - entry point for messaging platform integrations.
 
 Provides ``start_gateway()`` (start all configured adapters) and ``GatewayRunner`` (lifecycle).

@@ -1,4 +1,3 @@
-# health: allow FILE_LINES -- druzhok fork: small group-limits hooks, kept in place so update-hermes can carry them
 """Inbound message pipeline (_handle_message, text/media preparation, durable-turn markers, plugin injection) for GatewayRunner.
 
 Split out of ``gateway/run.py``; bound onto ``GatewayRunner`` via the MRO.
