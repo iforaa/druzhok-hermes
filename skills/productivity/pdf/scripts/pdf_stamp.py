@@ -54,7 +54,8 @@ def build_overlay(args, page_width: float, page_height: float) -> bytes:
     if args.rotation:
         c.rotate(float(args.rotation))
     if args.text:
-        c.setFont(args.font, float(args.font_size))
+        import _fonts
+        c.setFont(_fonts.face(args.font), float(args.font_size))
         c.setFillColor(HexColor(args.color))
         c.drawString(0, 0, args.text)
     else:
@@ -88,7 +89,7 @@ def main() -> int:
     parser.add_argument("--x", type=float, required=True, help="X in points (origin bottom-left)")
     parser.add_argument("--y", type=float, required=True, help="Y in points")
     parser.add_argument("--pages", default="1-", help="1-based ranges, e.g. '1-3,5' (default: all)")
-    parser.add_argument("--font", default="Helvetica", help="Font name (default Helvetica)")
+    parser.add_argument("--font", help="Font name; Helvetica faces use DejaVu Sans when installed (default Helvetica)")
     parser.add_argument("--font-size", type=float, default=24, help="Font size in points")
     parser.add_argument("--color", default="#000000", help="Text color as #RRGGBB")
     parser.add_argument("--rotation", type=float, default=0, help="Degrees counterclockwise")

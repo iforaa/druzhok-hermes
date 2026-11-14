@@ -531,6 +531,9 @@ web = [
 # in the druzhok repo). Installed with `--extra mnemosyne`; discovered through the
 # hermes_agent.memory_providers entry point.
 mnemosyne = ["mnemosyne-memory[embeddings]==4.0.0", "mnemosyne-hermes==0.7.7"]
+# druzhok: deps of the bundled microsoft-office/pdf skills for tenant bots (no internet there),
+# beyond upstream's `documents`/`documents-pdf`: charts and QR codes.
+druzhok-docs = ["matplotlib==3.11.2", "segno==1.6.6"]
 all = [
   # Policy (2026-05-12): `[all]` includes only extras that genuinely
   # CAN'T be prepared on demand by PM — i.e. things every
