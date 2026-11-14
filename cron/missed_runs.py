@@ -2,8 +2,9 @@
 
 Each job may carry ``catch_up``: ``true`` runs ONE catch-up for everything it missed, ``false``
 skips to the next slot. Absent, recurring jobs follow ``cron.catch_up_missed`` (default true)
-and one-shots keep the 120s grace rule (#93526: a stale reminder is skipped unless the job opts
-in). Either way the skipped or collapsed slots are booked as one ``missed ×N`` row in the
+and one-shots are retired past their late-run window (``oneshot_late_run_seconds()``: 120s unless
+the druzhok patch's HERMES_CRON_ONESHOT_LATE_S widens it; #93526: a stale reminder is skipped unless
+the job opts in). Either way the skipped or collapsed slots are booked as one ``missed ×N`` row in the
 execution ledger, so run history shows the gap instead of nothing.
 
 Called from the due scan in ``cron/jobs.py`` under the store lock; ledger writes ride the
