@@ -456,6 +456,15 @@ gateway:
   discard:
     nothing: "Niks om weg te gooi nie: hierdie klets het geen beurt wat in 'n herbegin verlore is nie."
     done: "🗑️ {count} verlore beurt(e) weggegooi; hulle is nie weer uitgevoer nie. Jou gestoorde boodskappe word nou beantwoord."
+  ingress:
+    refused: "⚠️ Hermes refused this message ({named}), so it was not saved or answered. Ask the operator to check gateway.log."
+    queue_full: "⏳ Too many messages are already waiting in this conversation; send this again after the current reply."
+    dropped: "⚠️ Hermes did not answer this message ({reason}): the conversation it was queued for moved, so it was dropped. Send it again to continue."
+    restarting: "⏳ Hermes is restarting — your message is saved and will be answered when it is back."
+    busy: "⏳ Your message is saved and will be answered when the work running in this conversation finishes."
+    lost_turn: "⏸️ This conversation is paused: a previous turn did not finish when Hermes restarted, and only you know whether to send it again. Your message is saved. Send {discard} to drop the lost turn and continue (it is not re-run), or /reset to start a fresh conversation."
+    lost_turn_end_user: "⏸️ This conversation is paused: the previous reply was cut off by a restart. Send /new to start a fresh conversation, then send your message again."
+    reauth_failed: "⏸️ This conversation is paused: a queued message could not be re-authorized ({reason}). Your message is saved but will not be answered here. Send /reset to start a fresh conversation, or ask the operator to resume this one."
   start:
     greeting: "👋 Hallo! Skryf vir my enigiets — teks of 'n stemboodskap. /help — wat ek kan doen."
   stop:

@@ -631,8 +631,8 @@ class GatewaySessionCommandsMixin:
         rows = hermes_state_runtime.list_session_admissions(
             authority.db, session_id=authority.logical_owner(entry.session_id))
         if sum(row["status"] == "queued" for row in rows) >= hermes_state_runtime.ADMISSION_QUEUE_MAX:
-            from gateway.session_ingress import QUEUE_FULL_REPLY
-            return QUEUE_FULL_REPLY
+            from gateway.session_ingress import queue_full_reply
+            return queue_full_reply()
         return None
 
     def _record_model_friction(self, signal: str, source, session_id: str, turns: int = 1) -> None:

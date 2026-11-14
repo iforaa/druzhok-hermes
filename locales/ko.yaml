@@ -456,6 +456,15 @@ gateway:
   discard:
     nothing: "버릴 것이 없습니다: 이 채팅에는 재시작으로 손실된 턴이 없습니다."
     done: "🗑️ 손실된 턴 {count}개를 버렸습니다. 다시 실행하지 않았습니다. 저장된 메시지에 이제 응답합니다."
+  ingress:
+    refused: "⚠️ Hermes refused this message ({named}), so it was not saved or answered. Ask the operator to check gateway.log."
+    queue_full: "⏳ Too many messages are already waiting in this conversation; send this again after the current reply."
+    dropped: "⚠️ Hermes did not answer this message ({reason}): the conversation it was queued for moved, so it was dropped. Send it again to continue."
+    restarting: "⏳ Hermes is restarting — your message is saved and will be answered when it is back."
+    busy: "⏳ Your message is saved and will be answered when the work running in this conversation finishes."
+    lost_turn: "⏸️ This conversation is paused: a previous turn did not finish when Hermes restarted, and only you know whether to send it again. Your message is saved. Send {discard} to drop the lost turn and continue (it is not re-run), or /reset to start a fresh conversation."
+    lost_turn_end_user: "⏸️ This conversation is paused: the previous reply was cut off by a restart. Send /new to start a fresh conversation, then send your message again."
+    reauth_failed: "⏸️ This conversation is paused: a queued message could not be re-authorized ({reason}). Your message is saved but will not be answered here. Send /reset to start a fresh conversation, or ask the operator to resume this one."
   start:
     greeting: "👋 안녕하세요! 텍스트나 음성 메시지로 무엇이든 보내 주세요. /help — 제가 할 수 있는 일."
   stop:
