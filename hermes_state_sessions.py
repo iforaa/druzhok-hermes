@@ -16,7 +16,7 @@ from agent.session_activity import (
 )
 from hermes_state_errors import SessionActiveWriteGuardError
 from hermes_state_common import (
-    _LISTABLE_CHILD_SQL, _RECOVERABLE_END_REASONS,
+    TELEGRAM_GROUP_SESSION_SQL, _LISTABLE_CHILD_SQL, _RECOVERABLE_END_REASONS,
     _RECOVERABLE_END_REASONS_SQL, _RESET_CHILD_SQL, _RESET_END_REASONS, _legacy_reset_child_sql, _non_continuation_child_sql,
     _shape_preview, _sql_preview_raw, QUEUED_PROMPT_METADATA_KEY,
     _sql_in_window, _sql_json_extract, _sql_session_last_active, _sql_session_last_active_by_id,
@@ -1127,6 +1127,7 @@ class SessionSessionsMixin:
         *,
         limit: int = 20,
         exclude_sources: list[str] | None = None,
+        exclude_telegram_groups: bool = False,
         timeout_seconds: float = 3.0,
         candidate_limit: int | None = None,
         lineage_limit: int | None = None,
@@ -1158,6 +1159,8 @@ class SessionSessionsMixin:
             placeholders = ",".join("?" for _ in exclude_sources)
             candidate_clauses.append(f"s.source NOT IN ({placeholders})")
             candidate_params.extend(exclude_sources)
+        if exclude_telegram_groups:
+            candidate_clauses.append(f"NOT {TELEGRAM_GROUP_SESSION_SQL}")
         candidate_where = " AND ".join(candidate_clauses)
 
         # A compression continuation is an implementation edge, unlike /new

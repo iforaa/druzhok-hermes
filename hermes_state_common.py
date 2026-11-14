@@ -294,6 +294,16 @@ def _sql_session_last_active_by_id(session_id_expr: str) -> str:
 # v33: data-only — re-tag delegate subagent rows that lost ``_delegate_from`` (see _run_data_migrations).
 SCHEMA_VERSION = 33
 
+# Druzhok: a Telegram session whose text session_search never returns. Same meaning as
+# gateway.group_limits: anything but a DM. An empty chat type counts as a group unless chat_id proves a
+# DM (Telegram DM ids are positive, group ids negative); rows older than these columns have neither.
+TELEGRAM_KNOWN_GROUP_SQL = """(s.source = 'telegram' AND (
+    COALESCE(s.chat_id, '') LIKE '-%'
+    OR (TRIM(COALESCE(s.chat_type, '')) <> '' AND LOWER(TRIM(s.chat_type)) NOT IN ('dm', 'private'))))"""
+TELEGRAM_UNPROVEN_SQL = """(s.source = 'telegram' AND TRIM(COALESCE(s.chat_type, '')) = ''
+    AND (COALESCE(s.chat_id, '') = '' OR s.chat_id GLOB '*[^0-9]*'))"""
+TELEGRAM_GROUP_SESSION_SQL = f"({TELEGRAM_KNOWN_GROUP_SQL} OR {TELEGRAM_UNPROVEN_SQL})"
+
 # Auto-maintenance VACUUMs only above this freelist fraction; below it a rewrite costs more I/O than it returns.
 # Auto-maintenance only VACUUMs when at least this fraction of the database file is reclaimable (``PRAGMA
 # freelist_count / PRAGMA page_count``). Below it a full rewrite costs more I/O than it returns — pruning a

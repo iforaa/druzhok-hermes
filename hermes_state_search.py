@@ -19,7 +19,8 @@ from agent.skill_commands import describe_skill_invocation
 from hermes_state_errors import is_malformed_db_error
 from hermes_state_common import (
     FTS_SQL, FTS_STALE_KEY, FTS_STORAGE_VERSION, FTS_TOOL_CONTENT_PREFIX_CHARS,
-    FTS_TRIGRAM_EXCLUDED_SOURCES, FTS_TRIGRAM_SQL,
+    FTS_TRIGRAM_EXCLUDED_SOURCES, FTS_TRIGRAM_SQL, TELEGRAM_GROUP_SESSION_SQL, TELEGRAM_KNOWN_GROUP_SQL,
+    TELEGRAM_UNPROVEN_SQL,
     MAX_FTS5_QUERY_CHARS, SCHEMA_VERSION,
     escape_like as _escape_like, fts_rebuild_admission, fts_trigram_session_sql, routed_sessions_setting,
 )
@@ -258,12 +259,14 @@ def _search_select_sql(snippet_sql: str, from_sql: str, where: list[str], order_
 def _search_filter_clauses(
     where: list[str], params: list, *, include_inactive: bool, source_filter: Optional[list[str]],
     exclude_sources: Optional[list[str]], role_filter: Optional[list[str]],
-    after_ts: Optional[int] = None, before_ts: Optional[int] = None) -> None:
+    after_ts: Optional[int] = None, before_ts: Optional[int] = None, exclude_telegram_groups: bool = False) -> None:
     """Append the visibility/source/role/session-start predicates every search route shares. Live
     rows (active=1) AND compaction-archived rows (compacted=1) are discoverable; only
     rewind/undo rows (active=0, compacted=0) are hidden. ``after_ts``/``before_ts`` bound
     ``sessions.started_at`` (inclusive / exclusive) inside the query so LIMIT cannot be
     filled by out-of-window hits."""
+    if exclude_telegram_groups:
+        where.append(f"NOT {TELEGRAM_GROUP_SESSION_SQL}")
     if not include_inactive:
         where.append("(m.active = 1 OR m.compacted = 1)")
     # display_kind="hidden" rows are model-facing scaffolding the person never saw; a hit would confuse.
@@ -836,6 +839,25 @@ class SessionSearchMixin:
 
     # ── Read views ─────────────────────────────────────────────────────────
 
+    def session_lineage_has_telegram_group(self, session_id: str) -> bool:
+        """True when this session or an ancestor may hold Telegram group text. A row with no chat fields
+        (older than those columns) hides itself and whatever descends from it, except a descendant proven
+        to be a Telegram DM: a lineage stays in one chat, so that row was the same DM."""
+        rows = self._read_all(
+            f"""WITH RECURSIVE lineage(id) AS (
+                   SELECT ?
+                   UNION
+                   SELECT s.parent_session_id FROM sessions s JOIN lineage l ON s.id = l.id
+                   WHERE s.parent_session_id IS NOT NULL
+               )
+               SELECT s.id, s.source, {TELEGRAM_KNOWN_GROUP_SQL} AS known, {TELEGRAM_UNPROVEN_SQL} AS unproven
+               FROM sessions s JOIN lineage l ON s.id = l.id""", (session_id,))
+        if any(row["known"] for row in rows):
+            return True
+        if not any(row["unproven"] for row in rows):
+            return False
+        return not any(row["id"] == session_id and row["source"] == "telegram" and not row["unproven"] for row in rows)
+
     def get_anchored_view(
         self, session_id: str, around_message_id: int, window: int = 5, bookend: int = 3,
         keep_roles: Optional[tuple[str, ...]] = ("user", "assistant")) -> dict[str, Any]:
@@ -1155,7 +1177,7 @@ class SessionSearchMixin:
         self, query: str, source_filter: list[str] | None = None, exclude_sources: list[str] | None = None,
         role_filter: list[str] | None = None, limit: int = 20, offset: int = 0, sort: str | None = None,
         include_inactive: bool = False, fields: Optional[Collection[str]] = None,
-        after_ts: Optional[int] = None, before_ts: Optional[int] = None,
+        after_ts: Optional[int] = None, before_ts: Optional[int] = None, exclude_telegram_groups: bool = False,
     ) -> list[dict[str, Any]]:
         """:meth:`_search_messages_impl` plus one log line per slow search with the routing
         path taken. Threshold HERMES_SEARCH_SLOW_MS (default 1000; 0 logs every call)."""
@@ -1165,7 +1187,7 @@ class SessionSearchMixin:
             rows = self._search_messages_impl(
                 query, source_filter=source_filter, exclude_sources=exclude_sources, role_filter=role_filter,
                 limit=limit, offset=offset, sort=sort, include_inactive=include_inactive, fields=fields,
-                after_ts=after_ts, before_ts=before_ts)
+                after_ts=after_ts, before_ts=before_ts, exclude_telegram_groups=exclude_telegram_groups)
             return rows
         finally:
             elapsed_ms = (time.time() - started) * 1000.0
@@ -1178,7 +1200,7 @@ class SessionSearchMixin:
         self, query: str, source_filter: list[str] | None = None, exclude_sources: list[str] | None = None,
         role_filter: list[str] | None = None, limit: int = 20, offset: int = 0, sort: str | None = None,
         include_inactive: bool = False, fields: Optional[Collection[str]] = None,
-        after_ts: Optional[int] = None, before_ts: Optional[int] = None,
+        after_ts: Optional[int] = None, before_ts: Optional[int] = None, exclude_telegram_groups: bool = False,
     ) -> list[dict[str, Any]]:
         """FTS5 search across session messages (keywords, ``"phrases"``, AND/OR/NOT, ``prefix*``).
         Returns snippet + session metadata + 1-message context per hit; ``fields`` selects a
@@ -1195,7 +1217,7 @@ class SessionSearchMixin:
             return []
         filters = dict(include_inactive=include_inactive, source_filter=source_filter,
                        exclude_sources=exclude_sources, role_filter=role_filter,
-                       after_ts=after_ts, before_ts=before_ts)
+                       after_ts=after_ts, before_ts=before_ts, exclude_telegram_groups=exclude_telegram_groups)
         # New oversized tool results index only a bounded prefix; an explicit tool-role search is the
         # opt-in full-body path and scans canonical rows via LIKE.
         if role_filter and "tool" in role_filter:
@@ -1285,7 +1307,7 @@ class SessionSearchMixin:
         like_params: list = [p for tok in non_op_tokens for p in _like_params(tok)]
         like_where = [f"({' OR '.join([_LIKE_ANY_COLUMN_SQL] * len(non_op_tokens))})"]
         filters = {k: route[k] for k in ("include_inactive", "source_filter", "exclude_sources", "role_filter",
-                                         "after_ts", "before_ts")}
+                                         "after_ts", "before_ts", "exclude_telegram_groups")}
         _search_filter_clauses(like_where, like_params, **filters)
         # instr() for the snippet uses the first search token.
         return self._like_rows(like_where, [non_op_tokens[0], *like_params, route["limit"], route["offset"]],
