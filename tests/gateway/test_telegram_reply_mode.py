@@ -344,3 +344,65 @@ class TestDMTopicSyntheticSendRouting:
         call = adapter._bot.send_message.call_args_list[0]
         assert call.kwargs.get("message_thread_id") == 42
         assert call.kwargs.get("direct_messages_topic_id") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("end_user_mode", [None, False, True])
+@pytest.mark.parametrize("reply_mode", ["first", "all", "off"])
+@pytest.mark.parametrize("transport", ["text", "rich", "media"])
+@pytest.mark.parametrize("chat_id,metadata", [
+    ("12345", None),
+    ("-10012345", None),
+    ("12345", {"thread_id": "42", "telegram_dm_topic_reply_fallback": True,
+               "telegram_reply_to_message_id": "999"}),
+    ("12345", {"direct_messages_topic_id": "42"}),
+    ("12345", {"message_thread_id": "42"}),
+])
+async def test_end_user_private_reply_policy(
+    adapter_factory, monkeypatch, end_user_mode, reply_mode, transport, chat_id, metadata,
+):
+    """Only ordinary private chats lose quotes; every transport keeps topic routing."""
+    monkeypatch.setattr("gateway.run._load_gateway_config", lambda: {
+        "display": {} if end_user_mode is None else {"end_user_mode": end_user_mode},
+    })
+    adapter = adapter_factory(reply_to_mode=reply_mode)
+    adapter._bot = MagicMock()
+    adapter._bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
+    adapter._bot.do_api_request = AsyncMock(return_value={"message_id": 1})
+    adapter._bot.send_photo = AsyncMock(return_value=MagicMock(message_id=1))
+    adapter._bot.send_chat_action = AsyncMock()
+    adapter._record_rich_sent = AsyncMock()
+    adapter.truncate_message = lambda content, max_len, **kw: ["chunk1", "chunk2"]
+    adapter._should_attempt_rich = lambda *args, **kwargs: transport == "rich"
+
+    if transport == "media":
+        monkeypatch.setattr("tools.url_safety.is_safe_url", lambda url: True)
+        result = await adapter.send_image(chat_id, "https://example.com/photo.png",
+                                          reply_to="999", metadata=metadata)
+        calls = [adapter._bot.send_photo.call_args.kwargs]
+    else:
+        result = await adapter.send(chat_id, "reply", reply_to="999", metadata=metadata)
+        if transport == "rich":
+            adapter._bot.do_api_request.assert_awaited_once()
+            calls = [adapter._bot.do_api_request.call_args.kwargs["api_kwargs"]]
+        else:
+            calls = [call.kwargs for call in adapter._bot.send_message.call_args_list]
+            assert len(calls) == 2
+
+    assert result.success is True
+    suppress = bool(end_user_mode) and chat_id == "12345" and metadata is None
+    for index, kwargs in enumerate(calls):
+        # Native media preserves upstream's explicit reply override, even in off mode.
+        quoted = not suppress and (transport == "media" or reply_mode != "off")
+        if transport == "text" and index > 0 and not (metadata or {}).get("telegram_dm_topic_reply_fallback"):
+            quoted = quoted and reply_mode == "all"
+        if transport == "rich":
+            assert kwargs.get("reply_parameters") == ({"message_id": 999} if quoted else None)
+        else:
+            assert kwargs.get("reply_to_message_id") == (999 if quoted else None)
+        if metadata and "thread_id" in metadata:
+            assert kwargs.get("message_thread_id") == 42
+        if metadata and "message_thread_id" in metadata:
+            assert kwargs.get("message_thread_id") == 42
+        if metadata and "direct_messages_topic_id" in metadata:
+            assert kwargs.get("direct_messages_topic_id") == 42
