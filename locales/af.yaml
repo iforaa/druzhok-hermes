@@ -456,6 +456,7 @@ gateway:
   discard:
     nothing: "Niks om weg te gooi nie: hierdie klets het geen beurt wat in 'n herbegin verlore is nie."
     done: "🗑️ {count} verlore beurt(e) weggegooi; hulle is nie weer uitgevoer nie. Jou gestoorde boodskappe word nou beantwoord."
+  cron_failure_end_user: "⚠️ The reminder «{name}» couldn't run."
   ingress:
     refused: "⚠️ Hermes refused this message ({named}), so it was not saved or answered. Ask the operator to check gateway.log."
     queue_full: "⏳ Too many messages are already waiting in this conversation; send this again after the current reply."

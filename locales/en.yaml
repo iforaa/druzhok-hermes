@@ -460,6 +460,7 @@ gateway:
   discard:
     nothing: "Nothing to discard: this chat has no turn lost in a restart."
     done: "🗑️ Discarded {count} lost turn(s); they were not re-run. Your saved messages will be answered now."
+  cron_failure_end_user: "⚠️ The reminder «{name}» couldn't run."
   ingress:
     refused: "⚠️ Hermes refused this message ({named}), so it was not saved or answered. Ask the operator to check gateway.log."
     queue_full: "⏳ Too many messages are already waiting in this conversation; send this again after the current reply."

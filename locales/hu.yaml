@@ -459,6 +459,7 @@ gateway:
   discard:
     nothing: "Nincs mit elvetni: ebben a csevegésben nem veszett el kör újraindításkor."
     done: "🗑️ {count} elveszett kör elvetve; nem futottak újra. A mentett üzeneteidre most válasz érkezik."
+  cron_failure_end_user: "⚠️ The reminder «{name}» couldn't run."
   ingress:
     refused: "⚠️ Hermes refused this message ({named}), so it was not saved or answered. Ask the operator to check gateway.log."
     queue_full: "⏳ Too many messages are already waiting in this conversation; send this again after the current reply."

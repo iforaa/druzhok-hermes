@@ -456,6 +456,7 @@ gateway:
   discard:
     nothing: "Nada para descartar: este chat não tem nenhum turno perdido em uma reinicialização."
     done: "🗑️ {count} turno(s) perdido(s) descartado(s); não foram executados novamente. Suas mensagens salvas serão respondidas agora."
+  cron_failure_end_user: "⚠️ The reminder «{name}» couldn't run."
   ingress:
     refused: "⚠️ Hermes refused this message ({named}), so it was not saved or answered. Ask the operator to check gateway.log."
     queue_full: "⏳ Too many messages are already waiting in this conversation; send this again after the current reply."

@@ -456,6 +456,7 @@ gateway:
   discard:
     nothing: "没有可丢弃的内容：此聊天没有在重启时丢失的回合。"
     done: "🗑️ 已丢弃 {count} 个丢失的回合；未重新执行。现在会回复你已保存的消息。"
+  cron_failure_end_user: "⚠️ The reminder «{name}» couldn't run."
   ingress:
     refused: "⚠️ Hermes refused this message ({named}), so it was not saved or answered. Ask the operator to check gateway.log."
     queue_full: "⏳ Too many messages are already waiting in this conversation; send this again after the current reply."

@@ -2972,7 +2972,19 @@ def _compose_run_delivery(
                 # The one alert on entering a provider-window hold says so (#89376).
                 + hold_notice(job, job.get("_quota_hold_seconds"))
             )
+    if not success and deliver_content and _end_user_mode():
+        # Druzhok (display.end_user_mode): the chat gets one short catalog line, never the raw error,
+        # job id, CLI commands or paths; the run output and the log keep the details.
+        from agent.i18n import t
+        deliver_content = t("gateway.cron_failure_end_user", name=job.get("name") or job["id"])
     return deliver_content, blocked_config, blocked_config_silent, incident_acked, failure_incident_id
+
+
+def _end_user_mode() -> bool:
+    """``display.end_user_mode`` of the firing profile (bots hosted for non-technical end users)."""
+    from utils import is_truthy_value
+    display = load_config_readonly().get("display") or {}
+    return is_truthy_value(display.get("end_user_mode"), default=False)
 
 
 class _FireClaimLostDuringSideEffect(Exception):

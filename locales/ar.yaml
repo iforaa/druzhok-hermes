@@ -456,6 +456,7 @@ gateway:
   discard:
     nothing: "لا شيء لتجاهله: لا توجد في هذه المحادثة جولة فُقدت أثناء إعادة التشغيل."
     done: "🗑️ تم تجاهل {count} جولة مفقودة؛ لم تُعد تشغيلها. سيتم الرد على رسائلك المحفوظة الآن."
+  cron_failure_end_user: "⚠️ The reminder «{name}» couldn't run."
   ingress:
     refused: "⚠️ Hermes refused this message ({named}), so it was not saved or answered. Ask the operator to check gateway.log."
     queue_full: "⏳ Too many messages are already waiting in this conversation; send this again after the current reply."
