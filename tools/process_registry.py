@@ -1,3 +1,4 @@
+# health: allow FILE_LINES -- druzhok fork: small cron end_user_mode / in-process-cron hooks, kept in place so update-hermes can carry them
 """Process Registry -- in-memory registry for background processes spawned via
 terminal(background=true): rolling 200KB output buffer, poll/log/wait/kill, JSON
 checkpoint for crash recovery, session-scoped tracking for gateway reset protection.
@@ -366,10 +367,11 @@ def _warn_scope_degraded_once(detail: str, *, consequence: str) -> None:
     logger.warning("%s; %s", detail, consequence)
 
 
+# Druzhok: cron runs a degraded fire inside the gateway (cron/scheduler.py _launch_external_cron_worker).
 _CRON_DEGRADED_CONSEQUENCE = (
-    "cron children are dispatched as direct external subprocesses without restart-safe "
-    "cgroup isolation (killed if the gateway restarts mid-job). Set "
-    "cron.require_restart_safe_scope=true in config.yaml to fail closed instead."
+    "cron jobs run inside the gateway process (druzhok fork) without restart-safe isolation "
+    "(a gateway restart mid-job interrupts them). Set cron.require_restart_safe_scope=true in "
+    "config.yaml to fail closed instead (every agent cron job is then refused on this host)."
 )
 _UNIT_DEGRADED_CONSEQUENCE = (
     "workers are spawned unmanaged inside this systemd unit's cgroup and will be KILLED when the "
@@ -384,10 +386,11 @@ class GatewayChildDispatch(NamedTuple):
 
     ``in_process``: not a managed systemd gateway, ``argv is command``, the caller
     keeps its in-process path.  ``scoped``: ``argv`` is the systemd-run wrapper.
-    ``degraded``: no user scope could be created; ``argv`` is the direct command but
-    the caller MUST still launch it as an external subprocess — the distinct mode
-    exists so this case can never collapse into ``in_process`` and recreate the
-    restart interruption #101940 closed.
+    ``degraded``: no user scope could be created; ``argv`` is the direct command and
+    the caller launches it as an external subprocess (kanban and other callers) — the
+    distinct mode exists so this case never silently collapses into ``in_process``.
+    Druzhok exception: cron runs a degraded fire in-process on purpose (its worker could
+    reach the owner only over a loopback WebSocket the bot firewall drops).
     """
 
     mode: Literal["in_process", "scoped", "degraded"]

@@ -624,7 +624,8 @@ _running_worker_pids: dict[tuple, int] = {}
 # (``GatewayChildDispatch.mode == "scoped"``). Only that worker outlives a gateway restart: a
 # systemd stop kills the service cgroup, so a ``degraded`` direct subprocess (no reachable user
 # bus) dies with the gateway even though it is external. The gateway's restart after-turn wait
-# skips exactly this set — see ``get_restart_wait_cron_counts``.
+# skips exactly this set — see ``get_restart_wait_cron_counts``. (Druzhok: cron never launches a
+# degraded worker; that fire runs in-process, see ``_launch_external_cron_worker``.)
 _scope_isolated_job_ids: set = set()
 _running_lock = threading.Lock()
 
@@ -2933,7 +2934,8 @@ def _compose_run_delivery(
     """Text to deliver for a finished run. Returns ``(deliver_content, blocked_config,
     silent_alert, incident_acked, failure_incident_id)``; ``silent_alert``: an alert-once marker
     says the operator was already told, deliver nothing. ``agent_declared``: *error* is the
-    agent's own ``[CRON_FAILURE]`` evidence, delivered verbatim."""
+    agent's own ``[CRON_FAILURE]`` evidence, delivered verbatim. Druzhok: with
+    ``display.end_user_mode`` on, every failure text becomes ``gateway.cron_failure_end_user``."""
     err = str(error) if error else ""
     # Failed jobs always deliver, except blocked-config runs, which alert exactly ONCE.
     blocked_config_silent = BLOCKED_CONFIG_SILENT_MARKER in err
@@ -2972,12 +2974,19 @@ def _compose_run_delivery(
                 # The one alert on entering a provider-window hold says so (#89376).
                 + hold_notice(job, job.get("_quota_hold_seconds"))
             )
-    if not success and deliver_content and _end_user_mode():
-        # Druzhok (display.end_user_mode): the chat gets one short catalog line, never the raw error,
-        # job id, CLI commands or paths; the run output and the log keep the details.
-        from agent.i18n import t
-        deliver_content = t("gateway.cron_failure_end_user", name=job.get("name") or job["id"])
+    if not success and deliver_content:
+        deliver_content = _end_user_failure_text(job, deliver_content)
     return deliver_content, blocked_config, blocked_config_silent, incident_acked, failure_incident_id
+
+
+def _end_user_failure_text(job: dict, text: str) -> str:
+    """Druzhok (display.end_user_mode): a failure reaches the chat as one short catalog line, never
+    the raw error, job id, CLI commands or paths; the run output and the log keep the details. Every
+    failure text goes through here: ``_compose_run_delivery`` and the crash path ``_deliver_crash_failure``."""
+    if not _end_user_mode():
+        return text
+    from agent.i18n import t
+    return t("gateway.cron_failure_end_user", name=job.get("name") or job["id"])
 
 
 def _end_user_mode() -> bool:
@@ -3190,7 +3199,7 @@ def _deliver_crash_failure(
             job,
             # Same text as the normal failure delivery: this run also counts toward
             # failure_streak, so the nudge must leave through here too.
-            _summarize_cron_failure_for_delivery(job, err_text) + _failure_streak_nudge(job),
+            _end_user_failure_text(job, _summarize_cron_failure_for_delivery(job, err_text) + _failure_streak_nudge(job)),
             adapters=adapters,
             loop=loop,
             for_failure=True,
@@ -3617,11 +3626,13 @@ def _wait_for_external_cron_worker(
 def _launch_external_cron_worker(job: dict) -> bool:
     """Launch *job* outside the managed gateway process when required.
 
-    Returns ``False`` outside a managed systemd gateway (in-process path).  In
-    managed topology the job always goes to an external worker with the #101940
-    ownership handoff: in a transient user scope, or — when no user D-Bus
-    session exists and ``cron.require_restart_safe_scope`` is false — as a
-    direct subprocess (process separation kept, cgroup isolation lost).
+    Returns ``False`` outside a managed systemd gateway (in-process path). In
+    managed topology the job goes to an external worker with the #101940
+    ownership handoff in a transient user scope. Druzhok: when no user D-Bus
+    session exists (and ``cron.require_restart_safe_scope`` is false) it also
+    returns ``False``: the fire runs in the gateway through its in-process owner
+    (upstream launched a direct subprocess, whose only way to the owner is a
+    loopback WebSocket that druzhok's per-bot egress firewall drops).
 
     A fire routed to a profile other than the process's own is multiplexed at THIS boundary too.
     ``run_one_job`` switches the context on in ``_install_fire_secret_scope``, which runs AFTER

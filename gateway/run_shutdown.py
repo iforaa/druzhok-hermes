@@ -1,3 +1,4 @@
+# health: allow FILE_LINES -- druzhok fork: small cron end_user_mode / in-process-cron hooks, kept in place so update-hermes can carry them
 """Stop/drain/restart, scale-to-zero and active-work accounting methods for GatewayRunner.
 
 Split out of ``gateway/run.py``; bound onto ``GatewayRunner`` via the MRO.
@@ -941,7 +942,10 @@ class GatewayShutdownMixin(GatewaySessionEndMixin):
                 logger.debug("Cron interrupt targets unresolved for %s: %s", job_id, e)
                 continue
             job_name = job.get("name") or job_id
-            msg = t("gateway.shutdown.cron_interrupted", job=job_name, action=action)
+            # Druzhok (display.end_user_mode): no "Hermes", no `hermes cron run`, no retry promise (a one-shot
+            # does not run again); the same short line as a failed run.
+            msg = (t("gateway.cron_failure_end_user", name=job_name) if self._load_end_user_mode()
+                   else t("gateway.shutdown.cron_interrupted", job=job_name, action=action))
             for target in targets or ():
                 try:
                     platform = Platform(str(target.get("platform", "")).lower())

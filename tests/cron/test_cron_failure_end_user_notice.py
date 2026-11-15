@@ -47,3 +47,36 @@ def test_a_successful_run_is_delivered_as_is(monkeypatch, lang):
     _mode(monkeypatch, True)
     text, *_ = _compose_run_delivery(JOB, success=True, error=None, final_response="Пора пить воду", output_file=None)
     assert text == "Пора пить воду"
+
+
+def test_a_crashed_run_also_reads_one_line(monkeypatch, lang):
+    """A run that raised out of run_job (disk full, a locked DB) is delivered by the crash path."""
+    lang("ru")
+    _mode(monkeypatch, True)
+    sent = []
+    monkeypatch.setattr(scheduler, "_deliver_result", lambda job, text, **kw: sent.append(text))
+    monkeypatch.setattr(scheduler, "_resolve_delivery_targets", lambda job, **kw: [{"platform": "telegram"}])
+    scheduler._deliver_crash_failure(JOB, "OSError: [Errno 28] No space left on device", adapters=None, loop=None)
+    assert sent == ["⚠️ Не получилось выполнить напоминание «Попить воды»."]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("on", [False, True])
+async def test_a_restart_interrupt_notice_names_no_cli_for_end_users(monkeypatch, lang, on):
+    from unittest.mock import patch
+
+    from gateway.run_config_loaders import GatewayConfigLoadersMixin
+    from tests.gateway.test_cron_interrupt_notification import _bind_notifier, _telegram_target
+    from tests.gateway.restart_test_helpers import make_restart_runner
+
+    lang("ru")
+    monkeypatch.setattr(GatewayConfigLoadersMixin, "_load_end_user_mode", staticmethod(lambda: on))
+    runner, adapter = make_restart_runner()
+    _bind_notifier(runner)
+    with patch("cron.jobs.get_job", return_value=JOB), \
+         patch("cron.scheduler._resolve_delivery_targets", return_value=[_telegram_target()]):
+        assert await runner._notify_interrupted_cron_jobs([JOB["id"]]) == 1
+    body = adapter.sent[0]
+    assert ("hermes cron run" in body) is not on
+    if on:
+        assert body == "⚠️ Не получилось выполнить напоминание «Попить воды»."

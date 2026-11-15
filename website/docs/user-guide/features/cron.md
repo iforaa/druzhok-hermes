@@ -464,7 +464,7 @@ A file lock at `~/.hermes/cron/.tick.lock` prevents overlapping scheduler ticks 
 
 When the gateway runs as a systemd service, each due job is handed to an external worker process launched in a transient user scope (`systemd-run --user --scope`), so restarting the gateway mid-job does not kill the job. Creating that scope needs a user systemd session; hosts without one (containers, minimal LXCs, a service user without linger) cannot provide it.
 
-By default cron then **degrades**: the job still runs as a separate external process with the same execution handoff, but without cgroup isolation, so a gateway restart during the job kills it (the execution ledger records that). One warning is logged per gateway process. To fail closed instead — skip the job and record the error on the job row — set:
+By default cron then **degrades**: the job still runs as a separate external process with the same execution handoff, but without cgroup isolation, so a gateway restart during the job kills it (the execution ledger records that). (Druzhok fork: a degraded fire runs inside the gateway process instead, through its in-process owner, because the external worker can reach the owner only over a loopback WebSocket that druzhok's per-bot egress firewall drops.) One warning is logged per gateway process. To fail closed instead — skip the job and record the error on the job row — set:
 
 ```yaml
 cron:
