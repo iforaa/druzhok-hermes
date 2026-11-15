@@ -639,7 +639,7 @@ def test_launch_external_worker_pins_the_gateways_tree_on_pythonpath(
     monkeypatch.setattr(scheduler, "_get_hermes_home", lambda: tmp_path)
     monkeypatch.setattr(
         "tools.process_registry.restart_safe_gateway_child_argv",
-        lambda command, **_: GatewayChildDispatch("degraded", command),
+        lambda command, **_: GatewayChildDispatch("scoped", command),  # druzhok: degraded runs in-process
     )
     monkeypatch.setenv("PYTHONPATH", str(tmp_path / "user-libs"))
     spawned, _payloads, _handoff, _get = _stub_external_worker_launch(scheduler, monkeypatch)
@@ -668,7 +668,7 @@ def test_launch_external_worker_pin_extends_the_sanitized_env_not_os_environ(
     monkeypatch.setattr(scheduler, "_get_hermes_home", lambda: tmp_path)
     monkeypatch.setattr(
         "tools.process_registry.restart_safe_gateway_child_argv",
-        lambda command, **_: GatewayChildDispatch("degraded", command),
+        lambda command, **_: GatewayChildDispatch("scoped", command),  # druzhok: degraded runs in-process
     )
     monkeypatch.setenv("PYTHONPATH", str(tmp_path / "raw-environ-only"))
     monkeypatch.setattr(

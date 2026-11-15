@@ -86,7 +86,7 @@ else:
 
     def dispatch(command, **kwargs):
         flags = command[command.index("--external-worker-file") :]
-        return GatewayChildDispatch("degraded", [sys.executable, str(worker), *flags])
+        return GatewayChildDispatch("scoped", [sys.executable, str(worker), *flags])  # druzhok: degraded runs in-process
 
     monkeypatch.setattr(
         "tools.process_registry.restart_safe_gateway_child_argv", dispatch

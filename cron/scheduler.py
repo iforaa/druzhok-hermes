@@ -3661,6 +3661,12 @@ def _launch_external_cron_worker(job: dict) -> bool:
     )
     if dispatch.mode == "in_process":
         return False
+    if dispatch.mode == "degraded":
+        # Druzhok: without a user scope the worker shares the service cgroup, so a restart kills it
+        # like an in-process run, and its only way to the owner is the gateway's loopback WebSocket on
+        # a random port, which druzhok's per-bot egress firewall drops (every fire then failed with
+        # "Gateway connection failed; no local fallback"). Run it here, through the in-process owner.
+        return False
 
     if mark_execution_handoff_pending(execution_id) is None:
         raise RuntimeError(
