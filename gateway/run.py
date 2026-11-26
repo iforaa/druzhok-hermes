@@ -2679,11 +2679,14 @@ def _dump_wedged_turn_stacks(task_id: str) -> None:
 def _abandon_timed_out_gateway_turn(
     *, agent_holder, task_id: str, process_baseline, worker_done: threading.Event,
     timeout_fired: threading.Event, cleanup_lock: threading.Lock,
-    is_still_current: Optional[Callable[[], bool]] = None) -> bool:
+    is_still_current: Optional[Callable[[], bool]] = None,
+    on_timeout: Optional[Callable[[], None]] = None) -> bool:
     """Interrupt one timed-out turn and reap only processes it created."""
     with cleanup_lock:
         if worker_done.is_set() or timeout_fired.is_set():
             return False
+        if on_timeout is not None:
+            on_timeout()
         timeout_fired.set()
 
     # BEFORE interrupting: the interrupt frees the blocked frame, destroying the only evidence.
@@ -2711,7 +2714,8 @@ def _abandon_timed_out_gateway_turn(
 def _watch_gateway_turn_inactivity(
     *, agent_holder, task_id: str, process_baseline, timeout: float, worker_done: threading.Event,
     timeout_fired: threading.Event, cleanup_lock: threading.Lock, poll_interval: float = 5.0,
-    is_still_current: Optional[Callable[[], bool]] = None) -> None:
+    is_still_current: Optional[Callable[[], bool]] = None,
+    on_timeout: Optional[Callable[[], None]] = None) -> None:
     """Thread watchdog that remains runnable when gateway asyncio is starved.
 
     Until an agent publishes a usable activity snapshot, elapsed worker time is the
@@ -2739,7 +2743,7 @@ def _watch_gateway_turn_inactivity(
         _abandon_timed_out_gateway_turn(
             agent_holder=agent_holder, task_id=task_id, process_baseline=process_baseline,
             worker_done=worker_done, timeout_fired=timeout_fired, cleanup_lock=cleanup_lock,
-            is_still_current=is_still_current)
+            is_still_current=is_still_current, on_timeout=on_timeout)
         return
 
 
@@ -4239,6 +4243,7 @@ class GatewayRunner(
         process_baseline: Any = None
         worker_done: Any = None
         timeout_fired: Any = None
+        on_timeout: Any = None
         cleanup_lock: Any = None
         is_current: Any = None
 

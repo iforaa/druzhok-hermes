@@ -146,6 +146,12 @@ def photo_scope(scope: PhotoScope | None):
         _current.reset(token)
 
 
+def photo_timeout_callback() -> Callable[[], None] | None:
+    """Capture this run's revoker before a watchdog thread loses the turn context."""
+    scope = _current.get()
+    return scope.revoke if scope is not None else None
+
+
 def photo_hint(path: str) -> str:
     scope = _current.get()
     return scope.hint(path) if scope is not None else ""

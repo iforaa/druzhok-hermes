@@ -6389,8 +6389,8 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         """Debounce album items (shared media_group_id) into one MessageEvent (see telegram_media_group)."""
         await queue_media_group_event(self, media_group_id, event)
 
-    async def _flush_media_group_event(self, media_group_id: str) -> None:
-        await flush_media_group_event(self, media_group_id)
+    async def _flush_media_group_event(self, batch_key: str) -> None:
+        await flush_media_group_event(self, batch_key)
 
     async def _handle_sticker(self, msg: Message, event: MessageEvent) -> None:
         """Describe a sticker via vision, cached by file_unique_id; animated/video stickers get an emoji placeholder."""

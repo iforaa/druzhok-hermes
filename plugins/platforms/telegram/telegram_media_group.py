@@ -39,6 +39,11 @@ def _in_flight(adapter: Any) -> dict[str, int]:
     return adapter.__dict__.setdefault("_media_group_in_flight", {})
 
 
+def album_key(chat_id: Any, media_group_id: str) -> str:
+    """Telegram album ids are scoped to their chat, including pending downloads."""
+    return f"{chat_id}:{media_group_id}"
+
+
 @contextlib.contextmanager
 def tracking_album_item(adapter: Any, msg: Any) -> Iterator[None]:
     """Count ``msg`` as an in-flight album item while its handler runs (download, cache, merge)."""
@@ -46,7 +51,7 @@ def tracking_album_item(adapter: Any, msg: Any) -> Iterator[None]:
     if group is None:
         yield
         return
-    key, counts = str(group), _in_flight(adapter)
+    key, counts = album_key(msg.chat.id, str(group)), _in_flight(adapter)
     counts[key] = counts.get(key, 0) + 1
     try:
         yield
@@ -79,15 +84,16 @@ async def queue_media_group_event(adapter: Any, media_group_id: str, event: Mess
     if adapter._should_drop_delayed_delivery():
         adapter._hold_inbound_event(event, where="media-group-enqueue")
         return
-    adapter._merge_into_pending(adapter._media_group_events, media_group_id, event)
+    key = album_key(event.source.chat_id, media_group_id)
+    adapter._merge_into_pending(adapter._media_group_events, key, event)
     adapter._accept_update()
-    prior_task = adapter._media_group_tasks.get(media_group_id)
+    prior_task = adapter._media_group_tasks.get(key)
     if prior_task:
         prior_task.cancel()
-    adapter._media_group_tasks[media_group_id] = asyncio.create_task(adapter._flush_media_group_event(media_group_id))
+    adapter._media_group_tasks[key] = asyncio.create_task(adapter._flush_media_group_event(key))
 
 
-async def flush_media_group_event(adapter: Any, media_group_id: str) -> None:
+async def flush_media_group_event(adapter: Any, key: str) -> None:
     """Debounce, then wait (bounded) for in-flight siblings, then dispatch the merged album.
 
     Waiting happens before ``_flush_buffered`` pops the event, so a sibling that lands meanwhile
@@ -95,7 +101,7 @@ async def flush_media_group_event(adapter: Any, media_group_id: str) -> None:
     await asyncio.sleep(media_group_wait_seconds(adapter))
     loop = asyncio.get_running_loop()
     deadline = loop.time() + MEDIA_GROUP_MAX_WAIT_SECONDS
-    while _in_flight(adapter).get(media_group_id, 0) > 0 and loop.time() < deadline:
+    while _in_flight(adapter).get(key, 0) > 0 and loop.time() < deadline:
         await asyncio.sleep(_IN_FLIGHT_POLL_SECONDS)
     await adapter._flush_buffered(
-        adapter._media_group_events, adapter._media_group_tasks, media_group_id, 0, "media-group")
+        adapter._media_group_events, adapter._media_group_tasks, key, 0, "media-group")

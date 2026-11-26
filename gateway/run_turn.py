@@ -1328,6 +1328,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         not wall-clock. The daemon watchdog is independent of asyncio: cgroup memory reclaim can
         starve the loop that runs the normal timeout poll."""
         from gateway.run import _float_env, _watch_gateway_turn_inactivity
+        from gateway.group_image_refs import photo_timeout_callback
         from tools.process_registry import process_registry
         agent_holder, session_key, run_generation = turn_ctx.agent_holder, turn_ctx.session_key, turn_ctx.run_generation
         _agent_timeout, _agent_warning = (
@@ -1349,6 +1350,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
             agent_timeout=_agent_timeout, agent_warning=_agent_warning, task_id=_turn_task_id,
             process_baseline=_turn_process_baseline, worker_done=threading.Event(),
             timeout_fired=threading.Event(), cleanup_lock=threading.Lock(),
+            on_timeout=photo_timeout_callback(),
             is_current=(
                 (lambda: self._is_session_run_current(session_key, run_generation))
                 if run_generation is not None
@@ -1393,6 +1395,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         return {
             **{k: getattr(worker, k) for k in ("task_id", "process_baseline", "worker_done", "timeout_fired", "cleanup_lock")},
             "is_still_current": worker.is_current,
+            "on_timeout": getattr(worker, "on_timeout", None),
         }
 
     @staticmethod
