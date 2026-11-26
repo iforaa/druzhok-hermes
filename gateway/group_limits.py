@@ -120,13 +120,14 @@ def group_sees_images(runner: Any, source: Any) -> bool:
 
 
 def in_limited_group_turn() -> bool:
-    """Whether the running tool call belongs to a limited group turn, read from the turn's session vars.
-    In a gateway process a call with no platform bound counts as one: it cannot prove it is not."""
-    from gateway.session_context import get_session_env, session_context_engaged
+    """Whether the running tool call belongs to a limited group turn, read from the turn's session vars
+    (an empty chat type on Telegram counts as a group). With no platform bound (cron, TUI, ACP, CLI) only
+    a bound gateway message turn's own source can make it one."""
+    from gateway.session_context import bound_turn_event, get_session_env
 
     platform = get_session_env("HERMES_SESSION_PLATFORM", "").strip().lower()
     if not platform:
-        return session_context_engaged()
+        return is_limited_group(getattr(bound_turn_event(), "source", None))
     return is_limited_group_chat(platform, get_session_env("HERMES_SESSION_CHAT_TYPE", ""))
 
 

@@ -575,15 +575,43 @@ def test_a_dm_turns_tool_call_keeps_references():
     assert result["success"] and dispatch.call_count == 1
 
 
-def test_a_gateway_call_with_no_bound_platform_counts_as_a_group(monkeypatch):
+def test_a_group_turn_with_no_chat_type_still_refuses():
+    source = SessionSource(platform=Platform.TELEGRAM, chat_id=GROUP_ID, chat_type=None, user_id=STRANGER_ID)
+    result, dispatch = _gateway_turn_tool_call(source, {"image_url": "/home/owner/photo.png"})
+    assert REFERENCE_REFUSAL in result["error"]
+    dispatch.assert_not_called()
+
+
+def _scoped_call(monkeypatch, **binding):
+    """``image_generate`` under a session binding other than a gateway message turn, in a process where
+    the gateway has engaged session context."""
     from gateway import session_context
+    from tools import image_generation_tool as tool
 
     monkeypatch.delenv("HERMES_SESSION_PLATFORM", raising=False)
+    monkeypatch.setattr(session_context, "_session_context_engaged", True)
 
-    def call(engaged):
-        monkeypatch.setattr(session_context, "_session_context_engaged", engaged)
+    def call():
         session_context.reset_session_vars()
-        return group_limits.in_limited_group_turn()
+        session_context.set_session_vars(**binding)
+        with patch.object(tool, "_dispatch_to_plugin_provider",
+                          return_value=json.dumps({"success": True, "image": "https://example.test/x.png"})) as dispatch:
+            return json.loads(tool._handle_image_generate({"prompt": "a cat", "image_url": "/home/owner/photo.png"})), dispatch
 
-    assert contextvars.copy_context().run(call, True) is True
-    assert contextvars.copy_context().run(call, False) is False  # the CLI never binds a session
+    return contextvars.copy_context().run(call)
+
+
+@pytest.mark.parametrize("binding", [
+    {"platform": "", "session_key": "cron:job", "cron_session": "1"},  # cron/scheduler.py _CronRunScope
+    {"source": "tui", "session_key": "tui:1", "session_id": "s1", "cron_session": ""},  # tui_gateway
+    {"session_key": "acp:1", "session_id": "s1", "cron_session": ""},  # acp_adapter
+])
+def test_cron_tui_and_acp_calls_keep_their_references(monkeypatch, binding):
+    result, dispatch = _scoped_call(monkeypatch, **binding)
+    assert result["success"] and dispatch.call_count == 1
+
+
+def test_a_bound_group_turn_event_refuses_even_without_a_platform(monkeypatch):
+    result, dispatch = _scoped_call(monkeypatch, platform="", turn_event=_event(_group()))
+    assert REFERENCE_REFUSAL in result["error"]
+    dispatch.assert_not_called()
