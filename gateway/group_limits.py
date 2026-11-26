@@ -148,11 +148,23 @@ def turn_outbox(messages: list, start: Optional[int]) -> frozenset[str]:
     for row in rows:
         if not isinstance(row, dict) or row.get("role") not in ("tool", "function"):
             continue
-        if names.get(str(row.get("tool_call_id") or row.get("call_id") or "")) != "image_generate":
+        if not _image_generate_result(row, names.get(str(row.get("tool_call_id") or row.get("call_id") or ""))):
             continue
         paths.update(_real(path) for path in _generated_paths(str(row.get("content") or ""))
                      if os.path.isabs(path) and os.path.isfile(path))
     return frozenset(paths)
+
+
+def _image_generate_result(row: dict, called: Optional[str]) -> bool:
+    """Whether a tool row is ``image_generate``'s result. Called directly, the call frame names it. Under
+    tool search the model calls the ``tool_call`` bridge, which runs one local tool per call; the executor
+    records the tool it actually ran as the row's ``tool_name``, and only that is trusted, never the
+    bridge's arguments."""
+    from tools.tool_search_catalog import TOOL_CALL_NAME
+
+    if called == "image_generate":
+        return True
+    return called == TOOL_CALL_NAME and row.get("tool_name") == "image_generate"
 
 
 def _generated_paths(content: str) -> list[str]:
