@@ -469,7 +469,10 @@ class GatewayAgentCacheMixin:
         from a worker /stop or /new invalidated is recognized and dropped."""
         if not session_key:
             return 0
-        persistent = self._session_state(session_key).persistent
+        state = self._session_state(session_key)
+        if scope := state.turn.group_photo_scope:
+            scope.revoke()
+        persistent = state.persistent
         # Monotonic by design (#28686): incremented here, NEVER reset.
         persistent.run_generation = int(persistent.run_generation) + 1
         return persistent.run_generation

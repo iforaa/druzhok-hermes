@@ -435,7 +435,7 @@ def _sniff_mime_from_bytes(raw: bytes) -> Optional[str]:
 _UNIVERSALLY_SUPPORTED_MIMES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
 
 
-def _transcode_to_png(raw: bytes) -> Optional[bytes]:
+def _transcode_to_png(raw: bytes, *, max_pixels: Optional[int] = None) -> Optional[bytes]:
     """Decode with Pillow and re-encode as PNG; None when impossible. HEIC/HEIF and
     AVIF need optional Pillow plugins, registered on demand; a missing plugin just
     looks like "can't decode" so the caller skips the image and the turn proceeds."""
@@ -456,6 +456,8 @@ def _transcode_to_png(raw: bytes) -> Optional[bytes]:
         import pillow_avif  # type: ignore
     try:
         with Image.open(BytesIO(raw)) as im:
+            if max_pixels is not None and im.width * im.height > max_pixels:
+                return None
             # Normalise exotic modes to RGBA so PNG can serialise and transparency survives.
             if im.mode not in {"RGB", "RGBA", "L", "LA", "P"}:
                 im = im.convert("RGBA")
@@ -536,6 +538,7 @@ def build_native_content_parts(
     image_urls: Optional[list[str]] = None,
     *,
     hide_paths: bool = False,
+    image_hints: Optional[dict[str, str]] = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Build an OpenAI-style ``content`` list for a user turn.
 
@@ -544,27 +547,35 @@ def build_native_content_parts(
     default) with a ``[Image attached at: <path>]`` / ``[Image attached: <url>]``
     hint per image — a string handle for tools taking an image path/URL, mirroring
     ``Runner._enrich_message_with_vision``. ``hide_paths`` leaves the hints out (a
-    group turn, which must never see a local path). Returns ``(content_parts, skipped)``;
+    group turn, which must never see a local path). ``image_hints`` supplies trusted
+    per-path labels next to their images without numbering skipped files again. Returns ``(content_parts, skipped)``;
     ``skipped`` holds unreadable local paths (URLs are never skipped).
     """
     skipped: list[str] = []
-    attached: list[tuple[str, str]] = []  # (url, hint)
+    attached: list[tuple[str, str, str]] = []  # (url, path hint, trusted label hint)
     for raw_path in image_paths:
         p = Path(raw_path)
         data_url = _file_to_data_url(p) if p.exists() and p.is_file() else None
         if data_url:
-            attached.append((data_url, f"[Image attached at: {raw_path}]"))
+            attached.append((data_url, f"[Image attached at: {raw_path}]", (image_hints or {}).get(raw_path, "")))
         else:
             skipped.append(str(raw_path))
-    attached += [(u, f"[Image attached: {u}]") for u in ((u or "").strip() for u in image_urls or []) if u]
+    attached += [(u, f"[Image attached: {u}]", "") for u in ((u or "").strip() for u in image_urls or []) if u]
 
     text = (user_text or "").strip()
     if not attached:
         return ([{"type": "text", "text": text}] if text else []), skipped
     combined_text = text or _DEFAULT_IMAGE_CAPTION
     if not hide_paths:
-        combined_text += "\n\n" + "\n".join(h for _, h in attached)
-    image_parts = [{"type": "image_url", "image_url": {"url": u}} for u, _ in attached]
+        combined_text += "\n\n" + "\n".join(h for _, h, _ in attached)
+    image_parts = [{"type": "image_url", "image_url": {"url": u}} for u, _, _ in attached]
+    if hide_paths:
+        labelled_parts = [{"type": "text", "text": combined_text}]
+        for (_, _, hint), part in zip(attached, image_parts):
+            if hint:
+                labelled_parts.append({"type": "text", "text": hint})
+            labelled_parts.append(part)
+        return labelled_parts, skipped
     return [{"type": "text", "text": combined_text}, *image_parts], skipped
 
 

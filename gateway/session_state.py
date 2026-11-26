@@ -25,6 +25,7 @@ class TurnState:
     # redirect re-anchors both to the redirecting message (#115001).
     event: Any = None
     ctx: Any = None
+    group_photo_scope: Any = None  # shared with copied worker contexts; revoked on generation change
     # The queued follow-up the turn is running now (its own sender's turn, see ``running_event``).
     follow_up_event: Any = None
     started_ts: float = 0.0  # 0.0 = not running
@@ -56,6 +57,9 @@ class TurnState:
 
     def clear(self) -> None:
         """Reset the per-turn slot.  The caller pops ``lease`` first to release it."""
+        if self.group_photo_scope is not None:
+            self.group_photo_scope.revoke()
+            self.group_photo_scope = None
         self.agent = self.lease = self.event = self.ctx = self.follow_up_event = None
         self.started_ts = self.busy_ack_ts = 0.0
 

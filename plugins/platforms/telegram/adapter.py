@@ -5813,6 +5813,9 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         event.media_types.append(cached.media_type)
         if len(event.media_urls) == 1 and cached.kind in self._CACHED_KIND_TO_MESSAGE_TYPE:
             event.message_type = self._CACHED_KIND_TO_MESSAGE_TYPE[cached.kind]
+        if str(getattr(event.source, "chat_type", "") or "").strip().lower() not in {"dm", "private"}:
+            kind = "Replied-to" if note.startswith("[Replied-to") else "Observed"
+            note = f"[{kind} {cached.kind}]"
         event.text = self._append_observed_note(event.text, note)
         logger.info(log_fmt, cached.kind, cached.path)
 
@@ -6386,8 +6389,8 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         """Debounce album items (shared media_group_id) into one MessageEvent (see telegram_media_group)."""
         await queue_media_group_event(self, media_group_id, event)
 
-    async def _flush_media_group_event(self, media_group_id: str) -> None:
-        await flush_media_group_event(self, media_group_id)
+    async def _flush_media_group_event(self, batch_key: str) -> None:
+        await flush_media_group_event(self, batch_key)
 
     async def _handle_sticker(self, msg: Message, event: MessageEvent) -> None:
         """Describe a sticker via vision, cached by file_unique_id; animated/video stickers get an emoji placeholder."""

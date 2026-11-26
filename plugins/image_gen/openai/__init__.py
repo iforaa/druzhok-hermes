@@ -8,6 +8,9 @@ endpoint's credential → ``OPENAI_API_KEY``."""
 from __future__ import annotations
 
 import io
+import hashlib
+import threading
+from time import monotonic
 import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple
@@ -84,8 +87,8 @@ def _build_client(openai: Any, base_url: str, api_key: str) -> Any:
     from agent.process_bootstrap import build_keepalive_http_client
 
     kwargs: dict[str, Any] = {"api_key": api_key, "default_headers": {"OpenAI-Project": ""}}
-    if base_url:
-        kwargs["base_url"] = base_url
+    # Passing the scoped default prevents the SDK inheriting a different profile's URL.
+    kwargs["base_url"] = base_url or "https://api.openai.com/v1"
     http_client = build_keepalive_http_client(base_url)
     if http_client is not None:
         kwargs["http_client"] = http_client
@@ -128,6 +131,50 @@ def _named_bytes_io(ref: str) -> io.BytesIO:
     return bio
 
 
+_EDIT_CAPABILITIES_TTL = 600.0
+_EDIT_CAPABILITIES_LOCK = threading.Lock()
+_EDIT_CAPABILITIES_KEYS: dict[tuple, Any] = {}
+_EDIT_CAPABILITIES_CACHE: dict[tuple[str, bytes, str], tuple[float, dict[str, Any]]] = {}
+
+
+def _cached_edit_capabilities(base_url: str, api_key: str, model: str) -> dict[str, Any]:
+    # Catalogue errors belong to the credential too: a sibling's 401 must not disable this bot.
+    key = (base_url, hashlib.sha256(api_key.encode()).digest(), model)
+    with _EDIT_CAPABILITIES_LOCK:
+        lock = _EDIT_CAPABILITIES_KEYS.setdefault(key, threading.Lock())
+    with lock:
+        cached = _EDIT_CAPABILITIES_CACHE.get(key)
+        if cached is not None and monotonic() < cached[0]:
+            return dict(cached[1])
+        result = _probe_edit_capabilities(base_url, api_key, model)
+        _EDIT_CAPABILITIES_CACHE[key] = (monotonic() + _EDIT_CAPABILITIES_TTL, result)
+        return dict(result)
+
+
+def _probe_edit_capabilities(base_url: str, api_key: str, model: str) -> dict[str, Any]:
+    openai, error = import_openai("openai", DEFAULT_ASPECT_RATIO)
+    if error:
+        return {}
+    try:
+        with _build_client(openai, base_url, api_key) as client:
+            catalogue = client.with_options(timeout=5, max_retries=0).get("/images/models", cast_to=dict[str, Any])
+        editors = [row for row in catalogue.get("models", [])
+                   if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"].strip()
+                   and row.get("edits") is True]
+        if not editors:
+            return {}
+        chosen = next((row for row in editors if row["id"] == model), editors[0])
+        # A proxy may choose its bot's own editor. Without effective-route metadata,
+        # use the minimum supported count across its catalogue, one when undeclared.
+        limit = min(16, *(int(row.get("max_reference_images", 1)) for row in editors))
+        if limit < 1:
+            return {}
+    except Exception:
+        logger.debug("Could not verify the gateway image edit catalogue", exc_info=True)
+        return {}
+    return {"modalities": ["text", "image"], "max_reference_images": limit, "edit_model": chosen["id"]}
+
+
 class OpenAIImageGenProvider(StaticImageGenProvider):
     """OpenAI ``images.generate`` / ``images.edit`` backend with selectable API models."""
 
@@ -147,6 +194,26 @@ class OpenAIImageGenProvider(StaticImageGenProvider):
     def capabilities(self) -> dict[str, Any]:
         # images.edit() accepts up to 16 source images.
         return {"modalities": ["text", "image"], "max_reference_images": 16}
+
+    def edit_capabilities(self, model: Optional[str] = None) -> dict[str, Any]:
+        from urllib.parse import urlparse
+
+        base_url, api_key = _resolve_endpoint()
+        if not api_key:
+            return {}
+        _, meta = _resolve_model()
+        if not base_url or urlparse(base_url).hostname == "api.openai.com":
+            caps = self.capabilities()
+        else:
+            caps = _cached_edit_capabilities(base_url, api_key, meta["api_model"])
+        if caps:
+            caps["edit_route"] = {
+                "base_url": base_url.rstrip("/") or "https://api.openai.com/v1",
+                "credential": hashlib.sha256(api_key.encode()).hexdigest(),
+                "model": caps.get("edit_model") or meta["api_model"],
+                "quality": meta["quality"] if caps.get("edit_model", meta["api_model"]) == meta["api_model"] else None,
+            }
+        return caps
 
     def generate(
         self, prompt: str, aspect_ratio: str = DEFAULT_ASPECT_RATIO, *,
@@ -172,15 +239,23 @@ class OpenAIImageGenProvider(StaticImageGenProvider):
         size = size_for(aspect)
         sources = collect_source_images(image_url, reference_image_urls, limit=16)
         is_edit = bool(sources)
-        fail = error_factory("openai", aspect, model=tier_id, prompt=prompt)
+        route = kwargs.get("verified_edit_route") if is_edit else None
+        if route and (route["base_url"] != (base_url.rstrip("/") or "https://api.openai.com/v1")
+                      or route["credential"] != hashlib.sha256(api_key.encode()).hexdigest()):
+            return error_factory("openai", aspect)("Image editing route changed; retry the request.", "route_changed")
+        edit_model = route["model"] if route else None
+        reported_model = edit_model if edit_model and edit_model != meta["api_model"] else tier_id
+        dispatched_model = edit_model or meta["api_model"]
+        fail = error_factory("openai", aspect, model=reported_model, prompt=prompt)
         client = _build_client(openai, base_url, api_key)
 
         # gpt-image-2 returns b64_json unconditionally and REJECTS
         # ``response_format`` as an unknown parameter. Don't send it.
         # A custom (non-catalog) model id carries no quality tier: gateways reject unknown enum values.
-        request: dict[str, Any] = dict(model=meta["api_model"], prompt=prompt, size=size, n=1)
-        if meta["quality"] is not None:
-            request["quality"] = meta["quality"]
+        request: dict[str, Any] = dict(model=dispatched_model, prompt=prompt, size=size, n=1)
+        quality = route["quality"] if route else meta["quality"]
+        if quality is not None:
+            request["quality"] = quality
         if is_edit:
             try:
                 files = [_named_bytes_io(ref) for ref in sources]
@@ -196,7 +271,13 @@ class OpenAIImageGenProvider(StaticImageGenProvider):
 
         # gpt-image bills per text/image token; the tier id is a Hermes label, the API model prices.
         # Recorded before extraction/save: the tokens are billed whether or not an image came back.
-        record_token_usage(getattr(response, "usage", None), model=meta["api_model"], provider="openai")
+        custom_edit = bool(route and route["base_url"] != "https://api.openai.com/v1")
+        actual_model = getattr(response, "model", None) if custom_edit else None
+        actual_model = actual_model.strip() if isinstance(actual_model, str) else ""
+        usage_model = actual_model or ("unknown" if custom_edit else dispatched_model)
+        if actual_model or custom_edit:
+            reported_model = usage_model
+        record_token_usage(getattr(response, "usage", None), model=usage_model, provider="openai")
         data = getattr(response, "data", None) or []
         if not data:
             return fail("OpenAI returned no image data", "empty_response")
@@ -204,14 +285,16 @@ class OpenAIImageGenProvider(StaticImageGenProvider):
         image_ref, err = materialize_image(
             getattr(first, "b64_json", None), getattr(first, "url", None),
             prefix=f"openai_{tier_id}", label="OpenAI", provider="openai",
-            model=tier_id, prompt=prompt, aspect=aspect, log=logger)
+            model=reported_model, prompt=prompt, aspect=aspect, log=logger)
         if err:
             return err
-        extra: dict[str, Any] = {"size": size, "quality": meta["quality"]}
+        extra: dict[str, Any] = {"size": size, "quality": request.get("quality")}
+        if custom_edit:
+            extra["requested_model"] = dispatched_model
         if getattr(first, "revised_prompt", None):
             extra["revised_prompt"] = first.revised_prompt
         return success_response(
-            image=image_ref, model=tier_id, prompt=prompt, aspect_ratio=aspect, provider="openai",
+            image=image_ref, model=reported_model, prompt=prompt, aspect_ratio=aspect, provider="openai",
             modality="image" if is_edit else "text", extra=extra)
 
 

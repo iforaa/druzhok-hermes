@@ -94,6 +94,9 @@ class MessageEvent:
     # Media attachments: local file paths (for vision tool access)
     media_urls: list[str] = field(default_factory=list)
     media_types: list[str] = field(default_factory=list)
+    # Platform ingress stamps (platform, chat); viewer uploads keep None. The owner-only
+    # native codec retains it; mixed origins cannot acquire one group's photo authority.
+    _native_media_origin: Optional[tuple[str, str]] = field(default=None, repr=False, kw_only=True)
     # Per-attachment text-inlining contract; None = legacy "text/* already inlined into ``text``".
     media_text_inlined: list[Optional[bool]] = field(default_factory=list)
     reply_to_message_id: Optional[str] = None
@@ -169,6 +172,11 @@ class MessageEvent:
         """Append *other*'s attachments (urls, types and original names) to this event's. Names are
         padded with ``""`` on either side so each stays on its own attachment; events without names
         (native adapters keep the name in the cache path) leave ``media_filenames`` untouched."""
+        if other.media_urls:
+            if not self.media_urls:
+                self._native_media_origin = other._native_media_origin
+            elif self._native_media_origin != other._native_media_origin:
+                self._native_media_origin = None
         if self.media_filenames or other.media_filenames:
             def pad(msg: "MessageEvent") -> list[str]:
                 return (list(msg.media_filenames) + [""] * len(msg.media_urls))[: len(msg.media_urls)]

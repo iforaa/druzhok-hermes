@@ -1328,6 +1328,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         not wall-clock. The daemon watchdog is independent of asyncio: cgroup memory reclaim can
         starve the loop that runs the normal timeout poll."""
         from gateway.run import _float_env, _watch_gateway_turn_inactivity
+        from gateway.group_image_refs import photo_timeout_callback
         from tools.process_registry import process_registry
         agent_holder, session_key, run_generation = turn_ctx.agent_holder, turn_ctx.session_key, turn_ctx.run_generation
         _agent_timeout, _agent_warning = (
@@ -1349,6 +1350,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
             agent_timeout=_agent_timeout, agent_warning=_agent_warning, task_id=_turn_task_id,
             process_baseline=_turn_process_baseline, worker_done=threading.Event(),
             timeout_fired=threading.Event(), cleanup_lock=threading.Lock(),
+            on_timeout=photo_timeout_callback(),
             is_current=(
                 (lambda: self._is_session_run_current(session_key, run_generation))
                 if run_generation is not None
@@ -1393,6 +1395,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
         return {
             **{k: getattr(worker, k) for k in ("task_id", "process_baseline", "worker_done", "timeout_fired", "cleanup_lock")},
             "is_still_current": worker.is_current,
+            "on_timeout": getattr(worker, "on_timeout", None),
         }
 
     @staticmethod
@@ -2214,14 +2217,16 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
             else spawn(self._run_agent_notify_long_running(disp, turn_ctx, _executor_task_holder))
         )
 
+        from gateway.group_image_refs import run_photo_scope
         try:
-            # run_sync is TurnRunner.run_sync (bound method; executor call unchanged).
-            worker = self._run_agent_start_turn_worker(turn_ctx, turn_runner.run_sync)
-            _executor_task_holder[0] = worker.executor_task  # read late by _notify_long_running
-            response = await self._run_agent_await_turn_worker(worker, turn_ctx, _interrupt_detected, interrupt_monitor)
-            if isinstance(response, dict):
-                response["_notification_reply_muted"] = turn_ctx.mute_notification_reply
-            self._run_agent_evict_on_fallback(turn_ctx)
+            with run_photo_scope(self, turn_ctx):
+                # Bind before the worker copies context into executor/tool threads.
+                worker = self._run_agent_start_turn_worker(turn_ctx, turn_runner.run_sync)
+                _executor_task_holder[0] = worker.executor_task  # read late by _notify_long_running
+                response = await self._run_agent_await_turn_worker(worker, turn_ctx, _interrupt_detected, interrupt_monitor)
+                if isinstance(response, dict):
+                    response["_notification_reply_muted"] = turn_ctx.mute_notification_reply
+                self._run_agent_evict_on_fallback(turn_ctx)
 
             # Interrupted OR queued message (/queue)?
             result = turn_ctx.result_holder[0]

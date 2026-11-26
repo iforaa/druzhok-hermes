@@ -3917,6 +3917,9 @@ class BasePlatformAdapter(ABC):
         """Process an incoming message; returns quickly by spawning a background
         task so new messages (and interrupts) can arrive while an agent runs."""
         event._gateway_accepted = False
+        event._native_media_origin = (
+            (event.source.platform.value, str(event.source.chat_id))
+            if event.media_urls and event.source is not None and not event.internal else None)
         # Druzhok: before any busy-session path can queue it or dispatch it inline.
         from gateway.group_limits import refuses_group_command
         if refuses_group_command(event):
