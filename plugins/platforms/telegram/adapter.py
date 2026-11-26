@@ -5813,7 +5813,7 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         event.media_types.append(cached.media_type)
         if len(event.media_urls) == 1 and cached.kind in self._CACHED_KIND_TO_MESSAGE_TYPE:
             event.message_type = self._CACHED_KIND_TO_MESSAGE_TYPE[cached.kind]
-        if str(event.source.chat_type or "").strip().lower() not in {"dm", "private"}:
+        if str(getattr(event.source, "chat_type", "") or "").strip().lower() not in {"dm", "private"}:
             kind = "Replied-to" if note.startswith("[Replied-to") else "Observed"
             note = f"[{kind} {cached.kind}]"
         event.text = self._append_observed_note(event.text, note)
