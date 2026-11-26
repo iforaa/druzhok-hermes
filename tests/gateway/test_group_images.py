@@ -82,29 +82,33 @@ def _finish_turn(source, *paths, history=(), session_key=SESSION_KEY):
     group_limits.record_turn_outbox(source, session_key, {"messages": messages}, len(history), compressed=False)
 
 
+def clear_group_state():
+    """Forget every outbox, kept file and approval ``group_limits`` holds for the process."""
+    for state in (group_limits._outboxes, group_limits._validated, group_limits._approvals):
+        state.clear()
+
+
+def write_png(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(PNG)
+    return path
+
+
 @pytest.fixture(autouse=True)
 def _clean_state():
-    for state in (group_limits._outboxes, group_limits._validated, group_limits._approvals):
-        state.clear()
+    clear_group_state()
     yield
-    for state in (group_limits._outboxes, group_limits._validated, group_limits._approvals):
-        state.clear()
+    clear_group_state()
 
 
 @pytest.fixture
 def picture(tmp_path):
-    path = tmp_path / "cache" / "images" / "generated_cat.png"
-    path.parent.mkdir(parents=True)
-    path.write_bytes(PNG)
-    return path
+    return write_png(tmp_path / "cache" / "images" / "generated_cat.png")
 
 
 @pytest.fixture
 def owner_picture(tmp_path):
-    path = tmp_path / "home" / "owner_photo.png"
-    path.parent.mkdir(parents=True)
-    path.write_bytes(PNG)
-    return path
+    return write_png(tmp_path / "home" / "owner_photo.png")
 
 
 async def _non_streamed(adapter, response, source=None, session_key=SESSION_KEY, between=None):
