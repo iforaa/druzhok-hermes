@@ -240,7 +240,8 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
         await adapter.send(source.chat_id, content, metadata=metadata)
 
     async def _deliver_media_from_response(
-        self, response: str, event: MessageEvent, adapter, thread_metadata: Optional[dict[str, Any]] = None
+        self, response: str, event: MessageEvent, adapter, thread_metadata: Optional[dict[str, Any]] = None,
+        session_key: Optional[str] = None,
     ) -> None:
         """Deliver explicit attachments from an already-streamed response (text already delivered).
         EXPLICIT-ONLY, unlike the non-streaming path in ``gateway/platforms/base.py``: a bare local
@@ -249,7 +250,8 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
         directive is a deliberate attach); stale auto-appended tags are deduped upstream.
 
         Explicit means ``MEDIA:`` directives and markdown/HTML image tags — the two contracts the
-        non-streaming chain turns into attachments. See #20834 and #141806.
+        non-streaming chain turns into attachments. See #20834 and #141806. A group keeps only the
+        pictures of ``session_key``'s last turn (``drop_group_files``).
         """
         from urllib.parse import quote as _quote
         with _log_suppressed(logging.WARNING, "Post-stream media extraction failed: %s"):
@@ -258,6 +260,8 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
             from gateway.platforms.base import BasePlatformAdapter, should_send_media_as_audio
             media_files, cleaned = adapter.extract_media(response)
             media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files)
+            from gateway.group_limits import drop_group_files
+            media_files, _ = drop_group_files(event.source, media_files, [], session_key)
             # Strip image URLs (parity with the non-streaming chain); no extract_local_files here.
             # Do NOT deduplicate explicit MEDIA tags against prior turns here (#73771). This rescan is
             # already EXPLICIT-ONLY (see docstring): a MEDIA: directive in the final streamed reply is the
@@ -380,7 +384,7 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
             return True
         await self._deliver_media_from_response(
             response, MessageEvent(text="", source=source, message_id=event_message_id), adapter,
-            thread_metadata=metadata,
+            thread_metadata=metadata, session_key=session_key,
         )
         return True
 

@@ -1,14 +1,20 @@
 """Druzhok: limits for Telegram group chats, where every member is an untrusted stranger.
 
 A group runs only if its id is in ``DRUZHOK_GROUP_CHATS``. Its turns get ``group_toolsets`` (else
-``["web"]``), no owner memory, no context files, no slash commands, no ``@`` references and no local
-files out. DMs are untouched: every helper here answers False / passes through for them.
+``["web"]``), no owner memory, no context files, no slash commands and no ``@`` references. The only
+local files that go out are the pictures ``image_generate`` made in that same turn (the turn's outbox),
+each approved once for that chat; ``group_media`` lists the inbound kinds a turn may see. DMs are
+untouched: every helper here answers False / passes through for them.
 """
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any, Optional
+import os
+import threading
+import time
+from typing import Any, Iterable, Optional
 
 from gateway.config import Platform
 from gateway.platforms._shared import platform_gate_env
@@ -24,6 +30,15 @@ NEVER_TOOLSETS = frozenset({"memory", "session_search", "sites"})
 SESSION_MARKER = "group_limits"
 _DM_CHAT_TYPES = frozenset({"dm", "private"})  # "private" is Telegram's own word for a DM
 MEDIA_NOTE = "[The user attached media. Only its text, if it is shown here, is available in a group chat.]"
+GROUP_MEDIA_KINDS = frozenset({"image"})
+GROUP_IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
+REFERENCE_REFUSAL = "в группе можно только нарисовать по описанию"
+GROUP_IMAGE_UNSEEN = "[A group member sent an image, but it could not be seen this time.]"
+_OUTBOX_TTL_SECONDS = 600.0
+_APPROVAL_TTL_SECONDS = 60.0
+_state_lock = threading.Lock()
+_outboxes: dict[str, tuple[float, frozenset[str]]] = {}  # session key -> (expiry, real paths)
+_approvals: dict[tuple[str, str], float] = {}  # (chat id, real path) -> expiry
 
 
 def is_limited_group_chat(platform: Any, chat_type: Any) -> bool:
@@ -80,15 +95,141 @@ def resolve_group_toolsets(user_config: dict, platform_key: str, override: Any) 
     return sorted(kept) or list(FALLBACK_TOOLSETS)
 
 
-def drop_group_files(source: Any, media_files: list, local_files: list) -> tuple[list, list]:
-    """Drop every local file from a group reply, logged by count."""
+def group_media(value: Any) -> frozenset[str]:
+    """``platforms.telegram.extra.group_media``: the inbound media kinds a group turn may see. Missing,
+    null, empty or not a list is none (fail closed); unknown items are ignored."""
+    if not isinstance(value, list):
+        return frozenset()
+    return frozenset(item.strip().lower() for item in value if isinstance(item, str)) & GROUP_MEDIA_KINDS
+
+
+def has_reference(value: Any) -> bool:
+    """Whether an ``image_url`` / ``reference_image_urls`` argument names any source, in any form."""
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple)):
+        return any(has_reference(item) for item in value)
+    return value is not None and value is not False
+
+
+def group_sees_images(runner: Any, source: Any) -> bool:
+    """Whether a group turn on ``source`` gets its images described (``"image"`` in ``group_media``)."""
+    reader = getattr(runner._delivery_adapter_for(source), "group_media", None)
+    return callable(reader) and "image" in reader()
+
+
+def in_limited_group_turn() -> bool:
+    """Whether the running tool call belongs to a limited group turn, read from the turn's session vars."""
+    from gateway.session_context import get_session_env
+
+    platform = get_session_env("HERMES_SESSION_PLATFORM", "").strip().lower()
+    return is_limited_group_chat(platform, get_session_env("HERMES_SESSION_CHAT_TYPE", ""))
+
+
+def _real(path: Any) -> str:
+    return os.path.realpath(str(path))
+
+
+def turn_outbox(messages: list, start: Optional[int]) -> frozenset[str]:
+    """Real paths of the local images that successful ``image_generate`` calls made in ``messages[start:]``,
+    the rows this run appended. No trusted start (``None``, or past the list) gives nothing."""
+    from gateway.media_repair import tool_name_by_call_id
+
+    if not isinstance(messages, list) or not isinstance(start, int) or not 0 <= start <= len(messages):
+        return frozenset()
+    rows = messages[start:]
+    names = tool_name_by_call_id(rows)
+    paths = set()
+    for row in rows:
+        if not isinstance(row, dict) or row.get("role") not in ("tool", "function"):
+            continue
+        if names.get(str(row.get("tool_call_id") or row.get("call_id") or "")) != "image_generate":
+            continue
+        paths.update(_real(path) for path in _generated_paths(str(row.get("content") or ""))
+                     if os.path.isabs(path) and os.path.isfile(path))
+    return frozenset(paths)
+
+
+def _generated_paths(content: str) -> list[str]:
+    """The picture a successful JSON ``image_generate`` result names. A text result's ``MEDIA:`` tag is
+    not read: provider text can echo the prompt, which a group member wrote."""
+    try:
+        payload = json.loads(content)
+    except ValueError:
+        return []
+    if not isinstance(payload, dict) or payload.get("success") is not True:
+        return []
+    return next(([path] for field in ("host_image", "image") if isinstance(path := payload.get(field), str)), [])
+
+
+def set_turn_outbox(session_key: Any, paths: Iterable[str]) -> None:
+    """Record a finished group turn's outbox for its delivery; replaces whatever an earlier turn left."""
+    if not session_key:
+        return
+    with _state_lock:
+        _outboxes[str(session_key)] = (time.monotonic() + _OUTBOX_TTL_SECONDS, frozenset(paths))
+
+
+def take_turn_outbox(session_key: Any) -> frozenset[str]:
+    """The outbox of the session's last finished turn, removed so no later delivery can use it."""
+    with _state_lock:
+        expiry, paths = _outboxes.pop(str(session_key or ""), (0.0, frozenset()))
+    return paths if expiry > time.monotonic() else frozenset()
+
+
+def record_turn_outbox(source: Any, session_key: Any, result: dict, history_len: int, *, compressed: bool) -> None:
+    """After a group run: its outbox, from the rows it appended. The loop's proven current-turn row marks
+    them; without it only an uncompressed run's history length does, and a compressed one gets none."""
+    if not is_limited_group(source):
+        return
+    idx = result.get("current_turn_user_idx")
+    start = idx + 1 if isinstance(idx, int) and not isinstance(idx, bool) else None if compressed else history_len
+    set_turn_outbox(session_key, turn_outbox(result.get("messages"), start))
+
+
+def _approval_key(chat_id: Any, path: Any) -> tuple[str, str]:
+    return str(chat_id or "").strip(), _real(path)
+
+
+def group_file_approved(chat_id: Any, path: Any) -> bool:
+    """Whether ``drop_group_files`` approved this exact file for this chat moments ago."""
+    key = _approval_key(chat_id, path)
+    with _state_lock:
+        return _approvals.get(key, 0.0) > time.monotonic()
+
+
+def consume_group_file_approval(chat_id: Any, path: Any) -> None:
+    """End an approval once its send is over, whatever the outcome."""
+    with _state_lock:
+        _approvals.pop(_approval_key(chat_id, path), None)
+
+
+def _keep_for_group(path: Any, outbox: frozenset[str]) -> bool:
+    return (os.path.splitext(str(path))[1].lower() in GROUP_IMAGE_EXTS and _real(path) in outbox
+            and os.path.isfile(path))
+
+
+def drop_group_files(source: Any, media_files: list, local_files: list,
+                     session_key: Any = None) -> tuple[list, list]:
+    """Keep only the session's last turn's own generated pictures (its outbox, used up here) in a group
+    reply and approve each once for the adapter's last gate; every other local file is dropped, logged
+    by count."""
     if not is_limited_group(source) or not (media_files or local_files):
         return media_files, local_files
-    logger.warning(
-        "Dropped %d local file(s) from a reply to group chat %s", len(media_files) + len(local_files),
-        getattr(source, "chat_id", None),
-    )
-    return [], []
+    outbox = take_turn_outbox(session_key)
+    kept_media = [(path, voice) for path, voice in media_files if not voice and _keep_for_group(path, outbox)]
+    kept_local = [path for path in local_files if _keep_for_group(path, outbox)]
+    chat_id = getattr(source, "chat_id", None)
+    dropped = len(media_files) + len(local_files) - len(kept_media) - len(kept_local)
+    if dropped:
+        logger.warning("Dropped %d local file(s) from a reply to group chat %s", dropped, chat_id)
+    now = time.monotonic()
+    with _state_lock:
+        for key in [key for key, until in _approvals.items() if until <= now]:
+            del _approvals[key]
+        for path in [p for p, _voice in kept_media] + kept_local:
+            _approvals[_approval_key(chat_id, path)] = now + _APPROVAL_TTL_SECONDS
+    return kept_media, kept_local
 
 
 def replay_refused(platform_value: Any, chat_id: Any) -> bool:

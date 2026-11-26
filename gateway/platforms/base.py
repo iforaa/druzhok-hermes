@@ -4407,7 +4407,7 @@ class BasePlatformAdapter(ABC):
                             "this session: %s", self.name, len(suppressed), suppressed)
                 local_files = [p for p in local_files if p not in history]
         from gateway.group_limits import drop_group_files
-        media_files, local_files = drop_group_files(event.source, media_files, local_files)
+        media_files, local_files = drop_group_files(event.source, media_files, local_files, session_key)
         if local_files:
             logger.info("[%s] extract_local_files found %d file(s) in response", self.name, len(local_files))
         # A2 (#29346): extraction can reduce a non-empty response to empty text with no attachment, and the

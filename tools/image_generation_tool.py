@@ -821,6 +821,9 @@ def _handle_image_generate(args, **kw):
     aspect_ratio = args.get("aspect_ratio", DEFAULT_ASPECT_RATIO)
     upscale = args.get("upscale")
     task_id = kw.get("task_id")
+    from gateway.group_limits import REFERENCE_REFUSAL, has_reference, in_limited_group_turn
+    if in_limited_group_turn() and (has_reference(args.get("image_url")) or has_reference(args.get("reference_image_urls"))):
+        return tool_error(REFERENCE_REFUSAL)  # Druzhok: a group draws from text only, never from a file or URL
     # Confinement chokepoint BEFORE any dispatch: every route receives sandbox-confined bytes.
     image_url, reference_image_urls, confine_error = _confine_source_images(
         args.get("image_url"), args.get("reference_image_urls"), task_id)

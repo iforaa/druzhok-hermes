@@ -203,6 +203,7 @@ from plugins.platforms.telegram.telegram_send_errors import LOST, is_entity_pars
 from plugins.platforms.telegram.telegram_typing_gate import typing_may_fire
 from plugins.platforms.telegram.telegram_group_observe import apply_group_observe_attribution, shared_sender_suffix
 from plugins.platforms.telegram.telegram_picker_labels import model_button_labels
+from plugins.platforms.telegram.telegram_group_files import adapter_group_media, group_file_refused, group_images, group_send
 from plugins.platforms.telegram.telegram_topic_routing import TelegramTopicRoutingMixin
 from utils import env_float, env_int
 
@@ -763,13 +764,13 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
             return None
         return (getattr(self.config, "extra", None) or {}).get("group_toolsets")
 
+    def group_media(self) -> frozenset[str]:
+        """Druzhok: the inbound media kinds a group turn may see (``telegram_group_files``)."""
+        return adapter_group_media(self)
+
     def _group_file_refused(self, chat_id, path: str) -> Optional[SendResult]:
-        """Druzhok: the last gate for a local file, however a delivery path got here. Telegram DM ids
-        are positive integers, so anything else is a group or channel and gets no file."""
-        if str(chat_id).strip().isdigit():
-            return None
-        logger.warning("[%s] Refused to send a local file to group chat %s: %s", self.name, chat_id, os.path.basename(path))
-        return SendResult(success=False, error="Local files are not delivered to group chats")
+        """Druzhok: the last gate for a local file to a group (``telegram_group_files``)."""
+        return group_file_refused(self, chat_id, path)
 
     def _is_callback_user_authorized(
         self, user_id: str, *, chat_id: Optional[str] = None, chat_type: Optional[str] = None,
@@ -4919,6 +4920,7 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
                 raise
         raise _last_parse_error or RuntimeError("Telegram send_voice failed for all caption variants")
 
+    @group_send
     async def send_voice(
         self, chat_id: str, audio_path: str, caption: Optional[str] = None, reply_to: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None, **kwargs) -> SendResult:
@@ -4980,17 +4982,14 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
                 with contextlib.suppress(OSError):
                     os.unlink(_transcoded_voice_path)
 
+    @group_send
     async def send_multiple_images(
         self, chat_id: str, images: list[tuple], metadata: Optional[dict[str, Any]] = None, human_delay: float = 0.0) -> SendResult:
         """Send images as Telegram albums (``telegram_album.send_photo_album``). Animated GIFs can't join a
         media group (need ``send_animation``) so they go via the base per-image path."""
         if not self._bot:
             return SendResult(success=False, error="Not connected")
-        if not str(chat_id).strip().isdigit():
-            kept = [img for img in images if not img[0].startswith("file://")]
-            if len(kept) != len(images):
-                logger.warning("[%s] Refused %d local image(s) to group chat %s", self.name, len(images) - len(kept), chat_id)
-            images = kept
+        images = group_images(self, chat_id, images)
         if not images:
             return SendResult(success=False, error="no images to send")
         try:
@@ -5010,6 +5009,7 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         from plugins.platforms.telegram.telegram_album import send_photo_album
         return await send_photo_album(self, chat_id, photos, metadata, human_delay, delivered=delivered)
 
+    @group_send
     async def send_image_file(
         self, chat_id: str, image_path: str, caption: Optional[str] = None, reply_to: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None, **kwargs) -> SendResult:
@@ -5056,6 +5056,7 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         logger.warning("[%s] Failed to send %s: %s", self.name, media_key, _redact_telegram_error_text(e))
         return await fallback
 
+    @group_send
     async def send_document(
         self, chat_id: str, file_path: str, caption: Optional[str] = None, file_name: Optional[str] = None,
         reply_to: Optional[str] = None, metadata: Optional[dict[str, Any]] = None, **kwargs) -> SendResult:
@@ -5070,6 +5071,7 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
                     TelegramAdapter, self,
                 ).send_document(chat_id, file_path, caption, file_name, reply_to, metadata=metadata)))
 
+    @group_send
     async def send_video(
         self, chat_id: str, video_path: str, caption: Optional[str] = None, reply_to: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None, **kwargs) -> SendResult:
