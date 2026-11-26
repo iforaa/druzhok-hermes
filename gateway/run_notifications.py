@@ -260,7 +260,7 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
             from gateway.platforms.base import BasePlatformAdapter, should_send_media_as_audio
             media_files, cleaned = adapter.extract_media(response)
             media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files)
-            from gateway.group_limits import drop_group_files
+            from gateway.group_limits import drop_group_files, group_delivery
             media_files, _ = drop_group_files(event.source, media_files, [], session_key)
             # Strip image URLs (parity with the non-streaming chain); no extract_local_files here.
             # Do NOT deduplicate explicit MEDIA tags against prior turns here (#73771). This rescan is
@@ -291,26 +291,27 @@ class GatewayNotificationsMixin(GatewayUpdateNotificationsMixin, GatewayNotifica
             # Local images and URL images go out in one batch so a platform that bundles native
             # multi-attachment sends (Signal) still gets a single call. ``[[as_document]]`` only
             # applies to local files: a URL has no file to hand to send_document.
-            if image_paths or url_images:
-                try:
-                    images = [(f"file://{_quote(p)}", "") for p in image_paths]
-                    images.extend(url_images)
-                    await adapter.send_multiple_images(chat_id=chat_id, images=images, metadata=_thread_meta)
-                except Exception as e:
-                    logger.warning("[%s] Post-stream image batch delivery failed: %s", adapter.name, e)
-            for media_path, is_voice in non_image_media:
-                try:
-                    ext = Path(media_path).suffix.lower()
-                    if should_send_media_as_audio(event.source.platform, ext, is_voice=is_voice):
-                        await adapter.send_voice(
-                            chat_id=chat_id, audio_path=media_path, metadata=_thread_meta, is_voice=is_voice,
-                        )
-                    elif ext in _VIDEO_EXTS:
-                        await adapter.send_video(chat_id=chat_id, video_path=media_path, metadata=_thread_meta)
-                    else:
-                        await adapter.send_document(chat_id=chat_id, file_path=media_path, metadata=_thread_meta)
-                except Exception as e:
-                    logger.warning("[%s] Post-stream media delivery failed: %s", adapter.name, e)
+            with group_delivery(event.source, media_files, []):  # a group's pictures are approved only now
+                if image_paths or url_images:
+                    try:
+                        images = [(f"file://{_quote(p)}", "") for p in image_paths]
+                        images.extend(url_images)
+                        await adapter.send_multiple_images(chat_id=chat_id, images=images, metadata=_thread_meta)
+                    except Exception as e:
+                        logger.warning("[%s] Post-stream image batch delivery failed: %s", adapter.name, e)
+                for media_path, is_voice in non_image_media:
+                    try:
+                        ext = Path(media_path).suffix.lower()
+                        if should_send_media_as_audio(event.source.platform, ext, is_voice=is_voice):
+                            await adapter.send_voice(
+                                chat_id=chat_id, audio_path=media_path, metadata=_thread_meta, is_voice=is_voice,
+                            )
+                        elif ext in _VIDEO_EXTS:
+                            await adapter.send_video(chat_id=chat_id, video_path=media_path, metadata=_thread_meta)
+                        else:
+                            await adapter.send_document(chat_id=chat_id, file_path=media_path, metadata=_thread_meta)
+                    except Exception as e:
+                        logger.warning("[%s] Post-stream media delivery failed: %s", adapter.name, e)
 
 
     async def _deliver_queued_first_response(

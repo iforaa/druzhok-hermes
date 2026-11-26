@@ -84,11 +84,11 @@ def _finish_turn(source, *paths, history=(), session_key=SESSION_KEY):
 
 @pytest.fixture(autouse=True)
 def _clean_state():
-    group_limits._outboxes.clear()
-    group_limits._approvals.clear()
+    for state in (group_limits._outboxes, group_limits._validated, group_limits._approvals):
+        state.clear()
     yield
-    group_limits._outboxes.clear()
-    group_limits._approvals.clear()
+    for state in (group_limits._outboxes, group_limits._validated, group_limits._approvals):
+        state.clear()
 
 
 @pytest.fixture
@@ -107,13 +107,14 @@ def owner_picture(tmp_path):
     return path
 
 
-async def _non_streamed(adapter, response, source=None, session_key=SESSION_KEY):
-    """The non-streamed turn's delivery: ``_extract_response_content``, then the attachment sends."""
+async def _non_streamed(adapter, response, source=None, session_key=SESSION_KEY, between=None):
+    """The non-streamed turn's delivery: ``_extract_response_content``, then (after the text send,
+    ``between``) ``_deliver_attachments``."""
     event = _event(source or _group())
     extracted = await adapter._extract_response_content(response, event, session_key, is_ephemeral_response=False)
-    await adapter._deliver_media_attachments(
-        event, extracted.media_files, extracted.local_files, force_document_attachments=extracted.force_document_attachments,
-        human_delay=0.0, metadata={}, record_delivery=lambda _result: None)
+    if between is not None:
+        between()
+    await adapter._deliver_attachments(event, extracted, {}, anything_sent=True, record_delivery=lambda _result: None)
     return extracted
 
 
@@ -241,13 +242,11 @@ def test_another_sessions_outbox_is_not_used(picture):
 
 @pytest.mark.parametrize("chat_id", [GROUP_ID, OTHER_GROUP_ID, "@public_channel"])
 def test_a_send_that_skipped_drop_group_files_is_refused(picture, chat_id):
-    """Background tasks, topics and notifications call the adapter directly: they hold no approval,
-    even for a picture another delivery is about to send."""
+    """Background tasks, topics and notifications call the adapter directly: outside a reply's
+    attachment delivery nothing is approved, even the picture that reply is about to send."""
     adapter = _adapter()
     _finish_turn(_group(), picture)
-    group_limits.drop_group_files(_group(), [(str(picture), False)], [], SESSION_KEY)  # approves for GROUP_ID only
-    if chat_id == GROUP_ID:
-        group_limits.consume_group_file_approval(GROUP_ID, picture)
+    group_limits.drop_group_files(_group(), [(str(picture), False)], [], SESSION_KEY)  # kept for GROUP_ID
 
     async def attempts():
         return [
@@ -260,17 +259,51 @@ def test_a_send_that_skipped_drop_group_files_is_refused(picture, chat_id):
     assert not _uploads(adapter)
 
 
-def test_an_approval_sends_once(picture):
+def test_an_approval_sends_once_and_only_to_its_chat(picture):
+    adapter = _adapter()
+
+    async def sends():
+        with _approve(picture):
+            other = await adapter.send_image_file(chat_id=OTHER_GROUP_ID, image_path=str(picture))
+            return [other] + [await adapter.send_image_file(chat_id=GROUP_ID, image_path=str(picture)) for _ in range(2)]
+
+    other, first, second = asyncio.run(sends())
+    assert first.success and not second.success and not other.success
+    assert adapter._bot.send_photo.await_count == 1
+
+
+def test_an_approval_ends_with_its_delivery(picture):
+    adapter = _adapter()
+    with _approve(picture):
+        pass
+    assert not asyncio.run(adapter.send_image_file(chat_id=GROUP_ID, image_path=str(picture))).success
+    assert not _uploads(adapter)
+
+
+def test_a_slow_text_send_before_the_picture_does_not_lose_it(picture, monkeypatch):
+    """A 60 s RetryAfter on the text: the picture is approved only when its own delivery starts."""
     adapter = _adapter()
     _finish_turn(_group(), picture)
-    group_limits.drop_group_files(_group(), [(str(picture), False)], [], SESSION_KEY)
+    start = group_limits.time.monotonic()
+    later = SimpleNamespace(monotonic=lambda: start + 300)
+    asyncio.run(_non_streamed(adapter, f"Here it is\nMEDIA:{picture}",
+                              between=lambda: monkeypatch.setattr(group_limits, "time", later)))
+    assert adapter._bot.send_media_group.await_count == 1
 
-    async def twice():
-        return [await adapter.send_image_file(chat_id=GROUP_ID, image_path=str(picture)) for _ in range(2)]
 
-    first, second = asyncio.run(twice())
-    assert first.success and not second.success
-    assert adapter._bot.send_photo.await_count == 1
+def test_streamed_completion_delivers_the_runner_recorded_outbox(picture):
+    """``_hmwa_deliver_turn_response`` for a streamed group turn (``already_sent``) reads the outbox the
+    runner recorded under the turn's session key."""
+    adapter = _adapter()
+    runner = _runner(adapter)
+    runner._should_send_voice_reply = MagicMock(return_value=False)
+    runner._event_thread_metadata = MagicMock(return_value={})
+    _finish_turn(_group(), picture)
+    response = f"Here it is\nMEDIA:{picture}"
+    entry = SimpleNamespace(session_id="s1")
+    returned = asyncio.run(runner._hmwa_deliver_turn_response(
+        _event(_group()), _group(), entry, SESSION_KEY, None, {"already_sent": True}, [], response, None, False))
+    assert returned is None and adapter._bot.send_media_group.await_count == 1
 
 
 @pytest.mark.parametrize("name", ["clip.mp4", "voice.ogg"])
@@ -442,30 +475,31 @@ class _Flood(Exception):
 
 
 def _approve(picture):
+    """A reply's delivery of ``picture``: kept by ``drop_group_files``, approved by ``group_delivery``."""
     _finish_turn(_group(), picture)
-    group_limits.drop_group_files(_group(), [(str(picture), False)], [], SESSION_KEY)
+    kept, _ = group_limits.drop_group_files(_group(), [(str(picture), False)], [], SESSION_KEY)
+    return group_limits.group_delivery(_group(), kept, [])
 
 
 def test_a_flood_retry_of_an_approved_picture_is_sent(picture):
     adapter = _adapter()
     adapter._bot.send_photo = AsyncMock(side_effect=[_Flood("Flood control exceeded. Retry in 0 seconds"),
                                                      SimpleNamespace(message_id=2)])
-    _approve(picture)
-    result = asyncio.run(adapter.send_image_file(chat_id=GROUP_ID, image_path=str(picture)))
+    with _approve(picture):
+        result = asyncio.run(adapter.send_image_file(chat_id=GROUP_ID, image_path=str(picture)))
     assert result.success and adapter._bot.send_photo.await_count == 2
 
 
 def test_the_document_fallback_of_an_approved_picture_is_sent(picture):
     adapter = _adapter()
     adapter._bot.send_photo = AsyncMock(side_effect=RuntimeError("Photo_invalid_dimensions"))
-    _approve(picture)
-    result = asyncio.run(adapter.send_image_file(chat_id=GROUP_ID, image_path=str(picture)))
+    with _approve(picture):
+        result = asyncio.run(adapter.send_image_file(chat_id=GROUP_ID, image_path=str(picture)))
     assert result.success and adapter._bot.send_document.await_count == 1
 
 
 def test_an_approved_send_opens_nothing_for_the_next_send(picture, owner_picture):
     adapter = _adapter()
-    _approve(picture)
 
     async def one_task():
         first = await adapter.send_image_file(chat_id=GROUP_ID, image_path=str(picture))
@@ -473,7 +507,8 @@ def test_an_approved_send_opens_nothing_for_the_next_send(picture, owner_picture
         third = await adapter.send_multiple_images(chat_id=GROUP_ID, images=[(f"file://{owner_picture}", "")])
         return first, second, third
 
-    first, second, third = asyncio.run(one_task())
+    with _approve(picture):
+        first, second, third = asyncio.run(one_task())
     assert first.success and not second.success and not third.success
     assert adapter._bot.send_document.await_count == 0 and adapter._bot.send_media_group.await_count == 0
 
@@ -493,3 +528,62 @@ def test_an_unreadable_native_group_photo_gets_a_note(tmp_path):
     turn._runner = SimpleNamespace(_consume_pending_native_image_paths=lambda _key: [str(tmp_path / "gone.png")])
     message = turn._native_image_run_message()
     assert message == f"{group_limits.GROUP_IMAGE_UNSEEN}\n\nlook" and "gone.png" not in message
+
+
+# ── image_generate sees the group turn it runs in ────────────────────────────────────────────────
+
+
+def _gateway_turn_tool_call(source, args):
+    """``image_generate`` the way a gateway turn runs it: session vars bound by ``_set_session_env``,
+    the turn on the gateway's executor (``copy_context``), the tool on the agent's tool worker thread
+    (``propagate_context_to_thread``), dispatched through ``model_tools.handle_function_call``."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from gateway.session import SessionContext
+    from model_tools import handle_function_call
+    from tools import image_generation_tool as tool
+    from tools.thread_context import propagate_context_to_thread
+
+    runner = _runner(_adapter())
+    context = SessionContext(source=source, connected_platforms=[Platform.TELEGRAM], home_channels={},
+                             session_key=SESSION_KEY, session_id="s1")
+
+    def turn():
+        runner._set_session_env(context)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(propagate_context_to_thread(
+                lambda: handle_function_call("image_generate", {"prompt": "a cat", **args}))).result()
+
+    async def gateway():
+        loop = asyncio.get_running_loop()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return await loop.run_in_executor(pool, contextvars.copy_context().run, turn)
+
+    with patch.object(tool, "_dispatch_to_plugin_provider",
+                      return_value=json.dumps({"success": True, "image": "https://example.test/x.png"})) as dispatch:
+        return json.loads(contextvars.copy_context().run(asyncio.run, gateway())), dispatch
+
+
+def test_a_group_turns_tool_call_sees_the_group():
+    result, dispatch = _gateway_turn_tool_call(_group(), {"image_url": "/home/owner/photo.png"})
+    assert REFERENCE_REFUSAL in result["error"]
+    dispatch.assert_not_called()
+
+
+def test_a_dm_turns_tool_call_keeps_references():
+    result, dispatch = _gateway_turn_tool_call(_dm(), {"image_url": "https://example.test/a.png"})
+    assert result["success"] and dispatch.call_count == 1
+
+
+def test_a_gateway_call_with_no_bound_platform_counts_as_a_group(monkeypatch):
+    from gateway import session_context
+
+    monkeypatch.delenv("HERMES_SESSION_PLATFORM", raising=False)
+
+    def call(engaged):
+        monkeypatch.setattr(session_context, "_session_context_engaged", engaged)
+        session_context.reset_session_vars()
+        return group_limits.in_limited_group_turn()
+
+    assert contextvars.copy_context().run(call, True) is True
+    assert contextvars.copy_context().run(call, False) is False  # the CLI never binds a session

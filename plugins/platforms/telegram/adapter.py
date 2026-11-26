@@ -203,7 +203,7 @@ from plugins.platforms.telegram.telegram_send_errors import LOST, is_entity_pars
 from plugins.platforms.telegram.telegram_typing_gate import typing_may_fire
 from plugins.platforms.telegram.telegram_group_observe import apply_group_observe_attribution, shared_sender_suffix
 from plugins.platforms.telegram.telegram_picker_labels import model_button_labels
-from plugins.platforms.telegram.telegram_group_files import adapter_group_media, group_file_refused, group_images, group_send
+from plugins.platforms.telegram.telegram_group_files import group_file_refused, group_images, group_send
 from plugins.platforms.telegram.telegram_topic_routing import TelegramTopicRoutingMixin
 from utils import env_float, env_int
 
@@ -763,10 +763,6 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         if source.chat_type in ("dm", "private"):
             return None
         return (getattr(self.config, "extra", None) or {}).get("group_toolsets")
-
-    def group_media(self) -> frozenset[str]:
-        """Druzhok: the inbound media kinds a group turn may see (``telegram_group_files``)."""
-        return adapter_group_media(self)
 
     def _group_file_refused(self, chat_id, path: str) -> Optional[SendResult]:
         """Druzhok: the last gate for a local file to a group (``telegram_group_files``)."""

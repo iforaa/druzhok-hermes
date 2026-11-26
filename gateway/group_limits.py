@@ -3,8 +3,8 @@
 A group runs only if its id is in ``DRUZHOK_GROUP_CHATS``. Its turns get ``group_toolsets`` (else
 ``["web"]``), no owner memory, no context files, no slash commands and no ``@`` references. The only
 local files that go out are the pictures ``image_generate`` made in that same turn (the turn's outbox),
-each approved once for that chat; ``group_media`` lists the inbound kinds a turn may see. DMs are
-untouched: every helper here answers False / passes through for them.
+each approved once for that chat while its delivery runs; ``group_media`` lists the inbound kinds a
+turn may see. DMs are untouched: every helper here answers False / passes through for them.
 """
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Iterable, Optional
+from contextlib import contextmanager
+from typing import Any, Iterable, Iterator, Optional
 
 from gateway.config import Platform
 from gateway.platforms._shared import platform_gate_env
@@ -35,10 +36,11 @@ GROUP_IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
 REFERENCE_REFUSAL = "в группе можно только нарисовать по описанию"
 GROUP_IMAGE_UNSEEN = "[A group member sent an image, but it could not be seen this time.]"
 _OUTBOX_TTL_SECONDS = 600.0
-_APPROVAL_TTL_SECONDS = 60.0
+_VALIDATED_TTL_SECONDS = 600.0
 _state_lock = threading.Lock()
 _outboxes: dict[str, tuple[float, frozenset[str]]] = {}  # session key -> (expiry, real paths)
-_approvals: dict[tuple[str, str], float] = {}  # (chat id, real path) -> expiry
+_validated: dict[tuple[str, str], float] = {}  # (chat id, real path) kept by drop_group_files -> expiry
+_approvals: dict[tuple[str, str], int] = {}  # (chat id, real path) -> deliveries sending it now
 
 
 def is_limited_group_chat(platform: Any, chat_type: Any) -> bool:
@@ -114,15 +116,17 @@ def has_reference(value: Any) -> bool:
 
 def group_sees_images(runner: Any, source: Any) -> bool:
     """Whether a group turn on ``source`` gets its images described (``"image"`` in ``group_media``)."""
-    reader = getattr(runner._delivery_adapter_for(source), "group_media", None)
-    return callable(reader) and "image" in reader()
+    return "image" in group_media(runner._adapter_extra_for_source(source).get("group_media"))
 
 
 def in_limited_group_turn() -> bool:
-    """Whether the running tool call belongs to a limited group turn, read from the turn's session vars."""
-    from gateway.session_context import get_session_env
+    """Whether the running tool call belongs to a limited group turn, read from the turn's session vars.
+    In a gateway process a call with no platform bound counts as one: it cannot prove it is not."""
+    from gateway.session_context import get_session_env, session_context_engaged
 
     platform = get_session_env("HERMES_SESSION_PLATFORM", "").strip().lower()
+    if not platform:
+        return session_context_engaged()
     return is_limited_group_chat(platform, get_session_env("HERMES_SESSION_CHAT_TYPE", ""))
 
 
@@ -191,17 +195,39 @@ def _approval_key(chat_id: Any, path: Any) -> tuple[str, str]:
     return str(chat_id or "").strip(), _real(path)
 
 
-def group_file_approved(chat_id: Any, path: Any) -> bool:
-    """Whether ``drop_group_files`` approved this exact file for this chat moments ago."""
+def take_group_file_approval(chat_id: Any, path: Any) -> bool:
+    """Use up an approval when a send passes the adapter's gate with it. That send's own retries and
+    fallbacks run on its scope (``telegram_group_files``), not on the approval."""
     key = _approval_key(chat_id, path)
     with _state_lock:
-        return _approvals.get(key, 0.0) > time.monotonic()
+        return _approvals.pop(key, 0) > 0
 
 
-def consume_group_file_approval(chat_id: Any, path: Any) -> None:
-    """End an approval once its send is over, whatever the outcome."""
+@contextmanager
+def group_delivery(source: Any, media_files: list, local_files: list) -> Iterator[None]:
+    """Approve a group reply's pictures for the adapter's gate while its attachments go out, after any
+    text send before them, and withdraw what is left when the delivery ends. Only paths
+    ``drop_group_files`` kept for this chat are approved; each is approved once. While the delivery
+    runs, another send naming the same picture for the same chat could use the approval first: it is
+    this turn's own picture to its own group, and the delivery's send is then refused."""
+    if not is_limited_group(source):
+        yield
+        return
+    chat_id = getattr(source, "chat_id", None)
+    now = time.monotonic()
+    approved = []
     with _state_lock:
-        _approvals.pop(_approval_key(chat_id, path), None)
+        for path in [p for p, _voice in media_files] + list(local_files):
+            key = _approval_key(chat_id, path)
+            if _validated.pop(key, 0.0) > now:
+                _approvals[key] = 1
+                approved.append(key)
+    try:
+        yield
+    finally:
+        with _state_lock:
+            for key in approved:
+                _approvals.pop(key, None)
 
 
 def _keep_for_group(path: Any, outbox: frozenset[str]) -> bool:
@@ -212,8 +238,7 @@ def _keep_for_group(path: Any, outbox: frozenset[str]) -> bool:
 def drop_group_files(source: Any, media_files: list, local_files: list,
                      session_key: Any = None) -> tuple[list, list]:
     """Keep only the session's last turn's own generated pictures (its outbox, used up here) in a group
-    reply and approve each once for the adapter's last gate; every other local file is dropped, logged
-    by count."""
+    reply, marked for ``group_delivery`` to approve; every other local file is dropped, logged by count."""
     if not is_limited_group(source) or not (media_files or local_files):
         return media_files, local_files
     outbox = take_turn_outbox(session_key)
@@ -225,10 +250,10 @@ def drop_group_files(source: Any, media_files: list, local_files: list,
         logger.warning("Dropped %d local file(s) from a reply to group chat %s", dropped, chat_id)
     now = time.monotonic()
     with _state_lock:
-        for key in [key for key, until in _approvals.items() if until <= now]:
-            del _approvals[key]
+        for key in [key for key, until in _validated.items() if until <= now]:
+            del _validated[key]
         for path in [p for p, _voice in kept_media] + kept_local:
-            _approvals[_approval_key(chat_id, path)] = now + _APPROVAL_TTL_SECONDS
+            _validated[_approval_key(chat_id, path)] = now + _VALIDATED_TTL_SECONDS
     return kept_media, kept_local
 
 

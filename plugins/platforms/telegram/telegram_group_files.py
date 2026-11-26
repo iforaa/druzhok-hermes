@@ -1,10 +1,11 @@
 """Druzhok: the Telegram adapter's last gate for a local file, however a delivery path got here.
 
 Telegram DM ids are positive integers, so any other chat is a group or channel, and it gets no local
-file except a picture ``drop_group_files`` approved for that chat (``gateway.group_limits``). The
-approval is used up by the first public send that passes the gate. That send's own retries and
-fallbacks (inline flood retry, deferred re-upload, photo -> document, album -> single photo) run inside
-its scope and pass. Every other send opens a fresh scope and is refused.
+file except a picture ``group_delivery`` approved for that chat while that reply's attachments go out
+(``gateway.group_limits``). The approval is used up by the first public send that passes the gate.
+That send's own retries and fallbacks (inline flood retry, deferred re-upload, photo -> document,
+album -> single photo) run inside its scope and pass. Every other send opens a fresh scope and needs an
+approval of its own, so outside a delivery it is refused.
 """
 
 import functools
@@ -14,7 +15,7 @@ from contextvars import ContextVar
 from typing import Any, Optional
 from urllib.parse import unquote
 
-from gateway.group_limits import consume_group_file_approval, group_file_approved, group_media
+from gateway.group_limits import take_group_file_approval
 from gateway.platforms.base import SendResult
 
 logger = logging.getLogger("plugins.platforms.telegram.adapter")
@@ -49,9 +50,8 @@ def _cleared(chat_id: Any) -> bool:
 
 def _use_approval(chat_id: Any, path: str) -> bool:
     """Use up an approval for this send, opening its scope to the send's own retries."""
-    if not group_file_approved(chat_id, path):
+    if not take_group_file_approval(chat_id, path):
         return False
-    consume_group_file_approval(chat_id, path)
     scope = _SEND_SCOPE.get()
     if scope is not None:
         scope["chat"] = str(chat_id).strip()
@@ -73,8 +73,3 @@ def group_images(adapter: Any, chat_id: Any, images: list) -> list:
     if len(kept) != len(images):
         logger.warning("[%s] Refused %d local image(s) to group chat %s", adapter.name, len(images) - len(kept), chat_id)
     return kept
-
-
-def adapter_group_media(adapter: Any) -> frozenset[str]:
-    """The inbound media kinds a group turn may see; ``group_media`` fails closed on a bad value."""
-    return group_media((getattr(adapter.config, "extra", None) or {}).get("group_media"))

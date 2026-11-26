@@ -4336,8 +4336,7 @@ class BasePlatformAdapter(ABC):
                 return _thread_metadata
             await self.send(chat_id=event.source.chat_id, content=content, metadata=_thread_metadata)
         except Exception as notify_err:
-            logger.error(
-                "[%s] Failed to send error notification to user: %s", self.name, notify_err, exc_info=True)
+            logger.error("[%s] Failed to send error notification to user: %s", self.name, notify_err, exc_info=True)
         return _thread_metadata
 
     async def _deliver_attachments(self, event: MessageEvent, extracted: _ExtractedResponse,
@@ -4351,10 +4350,11 @@ class BasePlatformAdapter(ABC):
         if images:
             logger.info("[%s] Extracted %d image(s) to send as attachments", self.name, len(images))
             await self._send_image_batch(event, images, metadata, human_delay, record_delivery)
-        await self._deliver_media_attachments(
-            event, media_files, local_files,
-            force_document_attachments=extracted.force_document_attachments,
-            human_delay=human_delay, metadata=metadata, record_delivery=record_delivery)
+        from gateway.group_limits import group_delivery  # Druzhok: a group's pictures are approved only now
+        with group_delivery(event.source, media_files, local_files):
+            await self._deliver_media_attachments(
+                event, media_files, local_files, force_document_attachments=extracted.force_document_attachments,
+                human_delay=human_delay, metadata=metadata, record_delivery=record_delivery)
         if not (anything_sent or images or local_files or media_files) and extracted.pre_extract.strip():
             logger.error("[%s] response_delivery_dropped: non-empty response "
                          "(%d chars) produced no delivered message or attachment "
