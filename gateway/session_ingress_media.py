@@ -199,6 +199,24 @@ def ingress_fingerprint(payload, raw=None):
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def _legacy_native_retry(payload, retained, raw):
+    """New transport proof cannot change an old retry's identity or upgrade its authority."""
+    old = retained.get('native_text_v1', {})
+    current = payload.get('native_text_v1', {})
+    if 'native_media_origin' in old or 'native_media_origin' not in current:
+        return False
+    legacy = {**payload, 'native_text_v1': {**current}}
+    legacy['native_text_v1'].pop('native_media_origin')
+    if old.get('ingress_sha256') is not None:
+        return old['ingress_sha256'] == ingress_fingerprint(legacy, raw)
+    committed, fresh = old.get('media'), current.get('media')
+    if not committed or not fresh or [(r['sha256'], r['size']) for r in committed] != [
+            (r['sha256'], r['size']) for r in fresh]:
+        return False
+    legacy['native_text_v1']['media'] = committed
+    return legacy == retained
+
+
 def reconcile_native_retry(db, *, principal_id, session_id, request_id, payload, raw=None):
     """A redelivered native message (lost provider ACK, Relay buffer replay) re-downloads its media
     under a fresh disposable staging name, so its captured path differs from the committed one.
@@ -215,7 +233,8 @@ def reconcile_native_retry(db, *, principal_id, session_id, request_id, payload,
                            'target_session_id=? AND request_id=?', (principal_id, session_id, request_id)).fetchone()
     retained = json.loads(row[1]) if row is not None else {}
     recorded = retained.get('native_text_v1', {}).get('ingress_sha256')
-    if recorded is not None and recorded == ingress_fingerprint(payload, raw):
+    if ((recorded is not None and recorded == ingress_fingerprint(payload, raw))
+            or _legacy_native_retry(payload, retained, raw)):
         resolved = retained
     else:
         committed = retained.get('native_text_v1', {}).get('media')

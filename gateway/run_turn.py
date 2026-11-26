@@ -2214,14 +2214,16 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
             else spawn(self._run_agent_notify_long_running(disp, turn_ctx, _executor_task_holder))
         )
 
+        from gateway.group_image_refs import run_photo_scope
         try:
-            # run_sync is TurnRunner.run_sync (bound method; executor call unchanged).
-            worker = self._run_agent_start_turn_worker(turn_ctx, turn_runner.run_sync)
-            _executor_task_holder[0] = worker.executor_task  # read late by _notify_long_running
-            response = await self._run_agent_await_turn_worker(worker, turn_ctx, _interrupt_detected, interrupt_monitor)
-            if isinstance(response, dict):
-                response["_notification_reply_muted"] = turn_ctx.mute_notification_reply
-            self._run_agent_evict_on_fallback(turn_ctx)
+            with run_photo_scope(self, turn_ctx):
+                # Bind before the worker copies context into executor/tool threads.
+                worker = self._run_agent_start_turn_worker(turn_ctx, turn_runner.run_sync)
+                _executor_task_holder[0] = worker.executor_task  # read late by _notify_long_running
+                response = await self._run_agent_await_turn_worker(worker, turn_ctx, _interrupt_detected, interrupt_monitor)
+                if isinstance(response, dict):
+                    response["_notification_reply_muted"] = turn_ctx.mute_notification_reply
+                self._run_agent_evict_on_fallback(turn_ctx)
 
             # Interrupted OR queued message (/queue)?
             result = turn_ctx.result_holder[0]

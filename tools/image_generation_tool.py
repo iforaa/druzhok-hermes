@@ -684,10 +684,12 @@ def _declared_controls(provider, controls: Optional[dict[str, Any]]) -> Optional
 def _dispatch_to_plugin_provider(
     prompt: str, aspect_ratio: str, image_url: Optional[str] = None,
     reference_image_urls: Optional[list] = None, upscale: Optional[bool] = None,
-    controls: Optional[dict[str, Any]] = None):
+    controls: Optional[dict[str, Any]] = None, verified_edit_route: Optional[dict] = None):
     """JSON result from the selected plugin provider, or ``None`` to fall through to in-tree FAL
     (provider unset / ``"fal"`` / ``"nous"``). Providers without ``upscale`` ignore it via ``**kwargs``."""
     configured = _plugin_provider_name()
+    if verified_edit_route and configured != verified_edit_route["provider"]:
+        return _provider_error("Image editing route changed; retry the request.", "route_changed")
     if configured is None:
         return None
     try:
@@ -711,6 +713,8 @@ def _dispatch_to_plugin_provider(
     try:
         _add_provider_kwargs(kwargs, image_url, reference_image_urls, upscale,
                              model=_read_configured_image_model(), controls=_declared_controls(provider, controls))
+        if verified_edit_route:
+            kwargs["verified_edit_route"] = verified_edit_route
         result = provider.generate(**kwargs)
     except Exception as exc:
         # A TypeError from generate() predating image_url support (third-party plugin not yet
@@ -738,14 +742,19 @@ def _normalize_krea_model(model_id: Optional[str]) -> Optional[str]:
     return candidate if candidate in KREA_MODEL_IDS else None
 
 
-def _managed_model_plugin() -> Optional[tuple]:
+def _managed_model_plugin(*, reachable: bool = False) -> Optional[tuple]:
     """``(plugin_name, model_id)`` when the stored selection routes to the Krea or Portal gateway
     (rule: :func:`tools.image_generation_managed.managed_route`), else ``None`` for the FAL path."""
     from tools.image_generation_managed import KREA, PORTAL, managed_route
 
     model_id = _read_configured_image_model()
-    return {KREA: ("krea", model_id), PORTAL: ("nous", model_id)}.get(
+    target = {KREA: ("krea", model_id), PORTAL: ("nous", model_id)}.get(
         managed_route(_read_configured_image_provider(), model_id))
+    if reachable and target and target[0] == "krea":
+        from plugins.image_gen.krea import _resolve_managed_krea_gateway
+        if _resolve_managed_krea_gateway() is None:
+            return None
+    return target
 
 
 def _maybe_route_managed_model(
@@ -758,15 +767,11 @@ def _maybe_route_managed_model(
     A Krea model with no reachable Krea gateway falls through (direct/BYO users keep their
     pipeline); a Portal model never does — falling through would silently bill a FAL default.
     """
-    target = _managed_model_plugin()
+    target = _managed_model_plugin(reachable=True)
     if target is None:
         return None
     plugin_name, model_id = target
     try:
-        if plugin_name == "krea":
-            from plugins.image_gen.krea import _resolve_managed_krea_gateway
-            if _resolve_managed_krea_gateway() is None:
-                return None
         provider = _get_plugin_provider(plugin_name)
     except Exception as exc:
         logger.debug("Managed %s routing unavailable: %s", plugin_name, exc)
@@ -821,12 +826,25 @@ def _handle_image_generate(args, **kw):
     aspect_ratio = args.get("aspect_ratio", DEFAULT_ASPECT_RATIO)
     upscale = args.get("upscale")
     task_id = kw.get("task_id")
-    from gateway.group_limits import REFERENCE_REFUSAL, has_reference, in_limited_group_turn
-    if in_limited_group_turn() and (has_reference(args.get("image_url")) or has_reference(args.get("reference_image_urls"))):
-        return tool_error(REFERENCE_REFUSAL)  # Druzhok: a group draws from text only, never from a file or URL
+    from gateway.group_limits import has_reference, in_limited_group_turn
+    verified_edit_route = None
+    group_sources = (has_reference(args.get("image_url")) or has_reference(args.get("reference_image_urls"))
+                     or (args.get("image_url") is not None and not isinstance(args["image_url"], str))
+                     or (args.get("reference_image_urls") is not None
+                         and not isinstance(args["reference_image_urls"], list))
+                     or bool(args.get("reference_image_urls")))
+    if in_limited_group_turn() and group_sources:
+        from gateway.group_image_refs import resolve_references
+        try:
+            image_url, reference_image_urls, verified_edit_route = resolve_references(
+                args.get("image_url"), args.get("reference_image_urls"), prompt)
+        except ValueError as exc:
+            return tool_error(str(exc))
+    else:
+        image_url, reference_image_urls = args.get("image_url"), args.get("reference_image_urls")
     # Confinement chokepoint BEFORE any dispatch: every route receives sandbox-confined bytes.
     image_url, reference_image_urls, confine_error = _confine_source_images(
-        args.get("image_url"), args.get("reference_image_urls"), task_id)
+        image_url, reference_image_urls, task_id)
     if confine_error is not None:
         return confine_error
     # Order matters: explicit plugin provider, then the model-driven managed gateways (Krea /
@@ -834,7 +852,8 @@ def _handle_image_generate(args, **kw):
     sources = dict(image_url=image_url, reference_image_urls=reference_image_urls,
                    upscale=upscale if isinstance(upscale, bool) else None)
     controls = {name: args[name] for name in _CREATIVE_CONTROL_PARAMS if name in args}
-    raw = _dispatch_to_plugin_provider(prompt, aspect_ratio, controls=controls or None, **sources)
+    raw = _dispatch_to_plugin_provider(
+        prompt, aspect_ratio, controls=controls or None, verified_edit_route=verified_edit_route, **sources)
     if raw is None:
         raw = _maybe_route_managed_model(prompt, aspect_ratio, controls=controls or None, **sources)
         if raw is not None:
@@ -879,7 +898,7 @@ def _fall_back_to_fal(raw: str, prompt: str, aspect_ratio: str, sources: dict[st
 _NO_CAPABILITIES = {"modalities": ["text"], "max_reference_images": 0, "supports_upscale": False}
 
 
-def _active_image_capabilities() -> dict[str, Any]:
+def _active_image_capabilities(*, for_edit: bool = False) -> dict[str, Any]:
     """Best-effort capabilities of the active backend/model; never raises.
 
     Mirrors runtime dispatch: a Krea or Portal model id under the managed selection asks that
@@ -887,11 +906,13 @@ def _active_image_capabilities() -> dict[str, Any]:
     Fail-closed: an undeclared capability is advertised as absent.
     """
     info: dict[str, Any] = dict(_NO_CAPABILITIES)
+    if for_edit and not check_image_generation_requirements():
+        return info
     configured_provider = _read_configured_image_provider()
-    managed = _managed_model_plugin()
+    managed = _managed_model_plugin(reachable=True)
     if managed is not None:
         plugin_name = managed[0]
-    elif configured_provider and configured_provider != "fal":
+    elif configured_provider and configured_provider not in ("fal", NOUS_MANAGED_PROVIDER):
         plugin_name = configured_provider
     else:
         plugin_name = None
@@ -899,8 +920,11 @@ def _active_image_capabilities() -> dict[str, Any]:
         try:
             provider = _get_plugin_provider(plugin_name)
             if provider is not None:
+                if for_edit and not provider.is_available():
+                    return info
                 try:
-                    caps = provider.capabilities() or {}
+                    caps = (provider.edit_capabilities(model=_read_configured_image_model())
+                            if for_edit else provider.capabilities()) or {}
                 except Exception:
                     caps = {}
                 info["provider"] = provider.display_name
@@ -909,6 +933,10 @@ def _active_image_capabilities() -> dict[str, Any]:
                     info["modalities"] = list(caps["modalities"])
                 if caps.get("max_reference_images"):
                     info["max_reference_images"] = int(caps["max_reference_images"])
+                if caps.get("max_source_images"):
+                    info["max_source_images"] = int(caps["max_source_images"])
+                if for_edit and isinstance(caps.get("edit_route"), dict):
+                    info["edit_route"] = {**caps["edit_route"], "provider": plugin_name}
                 # Plugins opt in explicitly; absent = no upscale param.
                 info["supports_upscale"] = bool(caps.get("supports_upscale"))
                 if caps.get("creative_controls"):
@@ -918,6 +946,8 @@ def _active_image_capabilities() -> dict[str, Any]:
                 return info
         except Exception:
             pass
+        if for_edit:
+            return info
     # In-tree FAL path (provider unset or == "fal"); _resolve_fal_model() never raises.
     model_id, meta = _resolve_fal_model()
     can_edit = bool(meta.get("edit_endpoint"))
@@ -936,7 +966,7 @@ _IMAGE_URL_PARAM = {
     "description": (
         "Source image to edit/transform (image-to-image). A public URL or "
         "an absolute local file path from the conversation. Omit for "
-        "text-to-image."
+        "text-to-image. In a Telegram group, only a ref: label issued for a photo in the current run works."
     ),
 }
 
@@ -1006,8 +1036,21 @@ def _build_dynamic_image_schema() -> dict[str, Any]:
         "file path; reference it in your response using the current "
         "platform's file-delivery convention."
     )
+    from gateway.group_limits import in_limited_group_turn
+    group = in_limited_group_turn()
     info = _active_image_capabilities()
+    if group:
+        from gateway.group_image_refs import edit_capabilities
+        editing = edit_capabilities()
+        if editing:
+            info.update(editing)
+        else:
+            info.update(modalities=["text"], max_reference_images=0)
+            info.pop("max_source_images", None)
+            info.pop("source_image_role", None)
     max_refs = int(info.get("max_reference_images") or 0)
+    if group:
+        max_refs = int(info.get("max_source_images") or max_refs)
     can_edit = "image" in set(info.get("modalities") or ["text"])
     static_props = IMAGE_GENERATE_SCHEMA["parameters"]["properties"]
     properties: dict[str, Any] = {
@@ -1028,8 +1071,11 @@ def _build_dynamic_image_schema() -> dict[str, Any]:
             refs_desc = (
                 f"Up to {max_refs} additional reference images (style, "
                 "character, or composition) guiding an edit. URLs or "
-                "absolute local paths."
+                "absolute local paths. In a Telegram group, only ref: labels issued for photos in the current run work."
             )
+        if group:
+            refs_desc = (f"Only ref: labels issued for photos in this Telegram run. At most {max_refs} "
+                         "distinct photos total across image_url and reference_image_urls; the two fields share this limit.")
         if max_refs > 1:
             properties["reference_image_urls"] = {
                 "type": "array",

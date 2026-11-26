@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
+import hashlib
 import logging
 import mimetypes
 import os
@@ -267,7 +268,8 @@ def _fetch_catalog(
             "id": model_id,
             "display": known.get("display", entry.get("name") or model_id),
             "strengths": known.get("strengths", generic),
-            "input_modalities": arch.get("input_modalities") or [],
+            "input_modalities": arch.get("input_modalities") or entry.get("input_modalities") or [],
+            "max_reference_images": entry.get("max_reference_images", entry.get("max_refs")),
         })
     return out
 
@@ -550,6 +552,31 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
                 max_refs = int(_IMAGE_API_MODELS[resolved].get("max_refs") or max_refs)
         return {"modalities": ["text", "image"], "max_reference_images": max_refs}
 
+    def edit_capabilities(self, model: Optional[str] = None) -> dict[str, Any]:
+        api_key, base_url = self._credentials()
+        if not api_key or not base_url:
+            return {}
+        limits = []
+        for model_id in self._resolve_model_chain(model):
+            if model_id.startswith("krea/krea-2-"):
+                return {"source_image_role": "style"}
+            surface = _select_surface(model_id, base_url, api_key, self._config_key) if self._supports_image_api else "chat"
+            if model_id in _IMAGE_API_MODELS:
+                limit = int(_IMAGE_API_MODELS[model_id].get("max_refs") or 0)
+            elif model_id in _KNOWN_MODEL_META:
+                limit = _MAX_REFERENCE_IMAGES
+            else:
+                rows = self._image_api_live_models() if surface == "images" else self._live_models()
+                row = next((row for row in rows if row["id"] == model_id), {})
+                if "image" not in (row.get("input_modalities") or []):
+                    return {}
+                declared = row.get("max_reference_images")
+                limit = int(declared) if declared is not None else 1
+            if limit < 1:
+                return {}
+            limits.append(limit if surface == "images" else min(limit, _MAX_REFERENCE_IMAGES))
+        return {"modalities": ["text", "image"], "max_reference_images": min(limits)}
+
     def list_models(self) -> list[dict[str, Any]]:
         """Live catalog: OpenRouter = ``GET /images/models`` ∪ chat-completions image models (new
         releases selectable); Nous Portal = chat-completions only. Offline: default chain + snapshot."""
@@ -568,19 +595,23 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
         return models
 
     def _cached_catalog(self, attr: str, label: str, **fetch: Any) -> list[dict[str, Any]]:
-        """Cached (per TTL) live catalog rows for this backend; ``[]`` when unreachable."""
+        """Live rows cached for this endpoint and credential; ``[]`` when unreachable."""
+        try:
+            api_key, base_url = self._credentials()
+        except Exception as exc:
+            logger.debug("%s live %s credentials unavailable: %s", self._name, label, exc, exc_info=True)
+            return []
+        key = (base_url, hashlib.sha256(api_key.encode()).digest())
         cached = getattr(self, attr)
-        if cached is not None and time.monotonic() - cached[1] < _LIVE_CACHE_TTL:
+        if cached is not None and cached[2] == key and time.monotonic() - cached[1] < _LIVE_CACHE_TTL:
             return cached[0]
         models: list[dict[str, Any]] = []
         try:
-            api_key, base_url = self._credentials()
             if base_url:
                 models = _fetch_catalog(base_url, api_key, **fetch)
         except Exception as exc:
             logger.debug("%s live %s unavailable: %s", self._name, label, exc)
-            models = []
-        setattr(self, attr, (models, time.monotonic()))
+        setattr(self, attr, (models, time.monotonic(), key))
         return models
 
     def _image_api_live_models(self) -> list[dict[str, Any]]:

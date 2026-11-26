@@ -43,6 +43,14 @@ class ImageGenProvider(CatalogProviderBase):
         keeps non-overriding providers backward compatible."""
         return {"modalities": ["text"], "max_reference_images": 0}
 
+    def edit_capabilities(self, model: Optional[str] = None) -> dict[str, Any]:
+        """Effective source-edit route, checked before issuing group photo labels.
+
+        Gateways whose runtime route differs from the schema override this to verify
+        an actual editor is available. The default uses the provider's declared route.
+        """
+        return self.capabilities()
+
     @abc.abstractmethod
     def generate(
         self,

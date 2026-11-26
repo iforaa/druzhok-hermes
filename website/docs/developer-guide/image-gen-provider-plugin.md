@@ -12,6 +12,27 @@ Image-gen provider plugins register a backend that services every `image_generat
 Image-gen is one of several **backend plugins** Hermes supports. The others (with more specialized ABCs) are [Memory Provider Plugins](./memory-provider-plugin.md), [Context Engine Plugins](./context-engine-plugin.md), and [Model Provider Plugins](./model-provider-plugin.md). General tool/hook/CLI plugins live in [Build a Hermes Plugin](./plugins/index.md).
 :::
 
+## Effective edit routes
+
+`ImageGenProvider.edit_capabilities(model=None)` defaults to `capabilities()`. A gateway whose
+edit route differs from its schema overrides it to verify an actual editor and
+return that route's `modalities` and total source count (`max_source_images`, or
+`max_reference_images` when no separate total is declared). The optional `model`
+argument is the same explicit model dispatch passes to `generate()`. Group photo labels
+are issued only for an image-capable edit route; a `source_image_role: style`
+route does not qualify. OpenAI-compatible custom endpoints must expose an
+authenticated `GET /images/models` catalogue with `models` rows declaring
+`edits: true`. The configured API model, or the first editor, is pinned in group
+edit requests. Since a proxy may choose its own editor, the smallest declared
+source limit across editors applies (one source when a limit is absent).
+Successful and failed checks are cached for 10 minutes per endpoint, credential
+fingerprint, and API model. Unavailable or unreadable catalogues give no group
+reference labels. Concurrent misses for the same key share one probe. The group edit
+request binds the verified endpoint and credential fingerprint through dispatch; a route
+change is refused. Custom edit responses should return the actual selected `model`:
+results and usage use that value, or `unknown` when absent, and retain `requested_model`.
+Ordinary schema descriptions and DM behavior continue to use `capabilities()`.
+
 ## How discovery works
 
 Hermes scans for image-gen backends in three places:

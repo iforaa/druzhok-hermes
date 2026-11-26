@@ -991,7 +991,9 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
         group = is_limited_group(ctx.source)
         try:
             from agent.image_routing import build_native_content_parts
-            parts, skipped = build_native_content_parts(ctx.message, native_imgs, hide_paths=group)
+            from gateway.group_image_refs import photo_hint
+            hints = {path: photo_hint(path) for path in native_imgs} if group else None
+            parts, skipped = build_native_content_parts(ctx.message, native_imgs, hide_paths=group, image_hints=hints)
             if skipped:
                 logger.warning("Native image attachment: skipped %d unreadable path(s): %s", len(skipped), skipped)
             if any(p.get("type") == "image_url" for p in parts):
