@@ -1545,9 +1545,9 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
             logger.debug("vision enrichment: session runtime resolution failed", exc_info=True)
 
         from agent.auxiliary_client import scoped_runtime_main
-
+        from gateway.group_limits import is_limited_group
         with scoped_runtime_main(vision_runtime):
-            return await self._enrich_message_with_vision(message_text, image_paths)
+            return await self._enrich_message_with_vision(message_text, image_paths, group=is_limited_group(source))
 
     async def _echo_stt_transcripts(
         self, adapter, source: SessionSource, transcripts: list[str], *, metadata=None, log_context: str = "Transcript"
@@ -1765,7 +1765,7 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
         follow-up paths so attribution, image enrichment, STT, document notes, reply context and
         @ references behave the same. Side effect: buffers per-session native image paths when the
         model supports native vision; the caller consumes that buffer at ``run_conversation``."""
-        from gateway.group_limits import MEDIA_NOTE, is_limited_group
+        from gateway.group_limits import MEDIA_NOTE, group_sees_images, is_limited_group
         rehome_inbound_media(event)  # before any consumer (vision, STT, document notes) reads media_urls
         _pending_stt_prepared = hasattr(event, "_gateway_pending_stt_text")
         message_text = (event._gateway_pending_stt_text if _pending_stt_prepared else event.text) or ""
@@ -1778,13 +1778,15 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
         message_text = self._prefix_inbound_sender_context(event, source, message_text)
         image_paths, audio_paths, audio_file_paths, video_paths = self._classify_inbound_media(event, _pending_stt_prepared)
         limited_group = is_limited_group(source)
-        if image_paths and not limited_group:
-            message_text = await self._enrich_inbound_images(source, session_key, message_text, image_paths)
+        seen_images = image_paths if not limited_group or group_sees_images(self, source) else []
+        if seen_images:
+            message_text = await self._enrich_inbound_images(source, session_key, message_text, seen_images)
         if audio_paths:
             message_text = await self._enrich_inbound_voice(event, source, message_text, audio_paths)
         if limited_group:
-            # No image analysis, no local paths and no tool hints: the turn has no tool that opens a file.
-            if set(event.media_urls or []) - set(audio_paths):
+            # Images are described only with "image" in group_media, never with a local path or a tool
+            # hint: the turn has no tool that opens a file. Other media get the note.
+            if set(event.media_urls or []) - set(audio_paths) - set(seen_images):
                 message_text = f"{MEDIA_NOTE}\n\n{message_text}"
         else:
             message_text = self._prepend_inbound_media_file_notes(
@@ -1912,12 +1914,13 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
             logger.debug("image_routing: decision failed, falling back to text — %s", exc)
             return "text"
 
-    async def _enrich_message_with_vision(self, user_text: str, image_paths: list[str]) -> str:
+    async def _enrich_message_with_vision(self, user_text: str, image_paths: list[str], group: bool = False) -> str:
         """Auto-analyze user-attached images with the vision tool and prepend the descriptions.
         Description *and* local cache path are injected so the model understands the image without
-        a tool call and can re-examine it with vision_analyze."""
+        a tool call and can re-examine it with vision_analyze; a group gets the description alone."""
         from tools.vision_tools import vision_analyze_tool
         from agent.memory_context import sanitize_context
+        from gateway.group_limits import GROUP_IMAGE_UNSEEN
 
         analysis_prompt = (
             "Concisely describe this image in 2-4 sentences "
@@ -1931,7 +1934,10 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
             try:
                 logger.debug("Auto-analyzing user image: %s", path)
                 result = json.loads(await vision_analyze_tool(image_url=path, user_prompt=analysis_prompt))
-                if result.get("success"):
+                if group:
+                    description = sanitize_context(result.get("analysis", "")) if result.get("success") else ""
+                    note = f"[A group member sent an image. It shows:\n{description}]" if description else GROUP_IMAGE_UNSEEN
+                elif result.get("success"):
                     description = sanitize_context(result.get("analysis", ""))
                     note = (
                         f"[The user sent an image~ Here's what I can see:\n{description}]\n"
@@ -1946,7 +1952,7 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
                     )
             except Exception as e:
                 logger.error("Vision auto-analysis error: %s", e)
-                note = (
+                note = GROUP_IMAGE_UNSEEN if group else (
                     f"[The user sent an image but something went wrong when I "
                     f"tried to look at it~ You can try examining it yourself "
                     f"with vision_analyze using image_url: {path}]"

@@ -987,16 +987,19 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
         native_imgs = self._runner._consume_pending_native_image_paths(ctx.session_key)
         if not native_imgs:
             return ctx.message
+        from gateway.group_limits import GROUP_IMAGE_UNSEEN, is_limited_group
+        group = is_limited_group(ctx.source)
         try:
             from agent.image_routing import build_native_content_parts
-            parts, skipped = build_native_content_parts(ctx.message, native_imgs)
+            parts, skipped = build_native_content_parts(ctx.message, native_imgs, hide_paths=group)
             if skipped:
                 logger.warning("Native image attachment: skipped %d unreadable path(s): %s", len(skipped), skipped)
             if any(p.get("type") == "image_url" for p in parts):
                 return parts
         except Exception as exc:
             logger.warning("Native image attachment failed, falling back to text: %s", exc)
-        return ctx.message
+        # A group turn was told nothing about its image (no path, no note): say it could not be seen.
+        return f"{GROUP_IMAGE_UNSEEN}\n\n{ctx.message}" if group else ctx.message
 
     def _run_conversation_with_approval(self, agent, agent_history, observed_group_context,
                                         persist_user_message_override, persist_user_timestamp_override):
@@ -1433,6 +1436,9 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
             **{key: result.get(key) for key in _LEDGER_PASSTHROUGH_KEYS if key in result},
         }
         compacted_in_place, effective_session_id, history_offset = self._sync_session_after_run(agent_history)
+        from gateway.group_limits import record_turn_outbox
+        record_turn_outbox(ctx.source, ctx.session_key, result, len(agent_history),
+                           compressed=compacted_in_place or effective_session_id != ctx.session_id)
         # failure_reason must survive the empty-response path too (TUI billing, transient-failure
         # persistence). compression_deferred (soft lock-contention defer) is distinct from
         # compression_exhausted so the gateway never auto-resets a session a concurrent compressor is

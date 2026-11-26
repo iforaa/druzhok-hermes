@@ -534,6 +534,8 @@ def build_native_content_parts(
     user_text: str,
     image_paths: list[str],
     image_urls: Optional[list[str]] = None,
+    *,
+    hide_paths: bool = False,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Build an OpenAI-style ``content`` list for a user turn.
 
@@ -541,7 +543,8 @@ def build_native_content_parts(
     When any image attaches, one text part combines the caption (or a neutral
     default) with a ``[Image attached at: <path>]`` / ``[Image attached: <url>]``
     hint per image — a string handle for tools taking an image path/URL, mirroring
-    ``Runner._enrich_message_with_vision``. Returns ``(content_parts, skipped)``;
+    ``Runner._enrich_message_with_vision``. ``hide_paths`` leaves the hints out (a
+    group turn, which must never see a local path). Returns ``(content_parts, skipped)``;
     ``skipped`` holds unreadable local paths (URLs are never skipped).
     """
     skipped: list[str] = []
@@ -558,7 +561,9 @@ def build_native_content_parts(
     text = (user_text or "").strip()
     if not attached:
         return ([{"type": "text", "text": text}] if text else []), skipped
-    combined_text = f"{text or 'What do you see in this image?'}\n\n" + "\n".join(h for _, h in attached)
+    combined_text = text or _DEFAULT_IMAGE_CAPTION
+    if not hide_paths:
+        combined_text += "\n\n" + "\n".join(h for _, h in attached)
     image_parts = [{"type": "image_url", "image_url": {"url": u}} for u, _ in attached]
     return [{"type": "text", "text": combined_text}, *image_parts], skipped
 
